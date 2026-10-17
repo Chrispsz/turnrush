@@ -1,0 +1,565 @@
+{
+  "version": 2,
+  "characters": [
+    {
+      "id": "ignia",
+      "name": "Ígnia Brasa-Viva",
+      "faction": "ember",
+      "role": "striker",
+      "hp": 920,
+      "attack": 112,
+      "defense": 38,
+      "speed": 62,
+      "mystery": {
+        "name": "Detonação Solar",
+        "chakra": 20,
+        "cooldown": 3,
+        "targets": "enemies_front",
+        "damage_pct": 120,
+        "applies_state": "launch",
+        "effect": "Golpe devastador que arremessa o alvo e o deixa em Queimadura (dano contínuo por 2 rodadas)."
+      },
+      "standard": {
+        "name": "Corte em Brasa",
+        "damage_pct": 70,
+        "applies_state": "none"
+      },
+      "chase": {
+        "name": "Chute Vulcânico",
+        "trigger": "launch",
+        "damage_pct": 30,
+        "applies_state": "knockdown",
+        "max_per_round": 1
+      },
+      "passive": {
+        "name": "Sede de Brasa",
+        "effect": "+15% de dano contra alvos em Queimadura."
+      }
+    },
+    {
+      "id": "orson",
+      "name": "Orson Muralha-Fundida",
+      "faction": "ember",
+      "role": "guardian",
+      "hp": 1140,
+      "attack": 96,
+      "defense": 58,
+      "speed": 42,
+      "mystery": {
+        "name": "Escudo de Obsidiana",
+        "chakra": 20,
+        "cooldown": 2,
+        "targets": "ally_single",
+        "damage_pct": 90,
+        "applies_state": "none",
+        "effect": "Concede escudo de 90% do ataque ao aliado e provoca os inimigos da frente."
+      },
+      "standard": {
+        "name": "Bastão de Lava",
+        "damage_pct": 60,
+        "applies_state": "knockdown"
+      },
+      "chase": {
+        "name": "Contragolpe Fundido",
+        "trigger": "launch",
+        "damage_pct": 25,
+        "applies_state": "knockback",
+        "max_per_round": 1
+      },
+      "passive": {
+        "name": "Guardião Incandescente",
+        "effect": "-15% de dano recebido enquanto estiver na linha de frente."
+      }
+    },
+    {
+      "id": "amara",
+      "name": "Amara Chama-Doce",
+      "faction": "ember",
+      "role": "support",
+      "hp": 980,
+      "attack": 100,
+      "defense": 44,
+      "speed": 55,
+      "mystery": {
+        "name": "Fogueira Interior",
+        "chakra": 15,
+        "cooldown": 2,
+        "targets": "ally_single",
+        "damage_pct": 100,
+        "applies_state": "none",
+        "effect": "Cura 100% do ataque e gera +10 de chakra para a equipe."
+      },
+      "standard": {
+        "name": "Toque Morno",
+        "damage_pct": 60,
+        "applies_state": "launch"
+      },
+      "chase": {
+        "name": "Golpe Fervedor",
+        "trigger": "knockdown",
+        "damage_pct": 20,
+        "applies_state": "none",
+        "max_per_round": 1
+      },
+      "passive": {
+        "name": "Cinzas Que Aquecem",
+        "effect": "No fim da rodada, cura 5% do HP do aliado com menos HP."
+      }
+    },
+    {
+      "id": "nimbo",
+      "name": "Nimbo Véu-de-Fumaça",
+      "faction": "ember",
+      "role": "controller",
+      "hp": 900,
+      "attack": 104,
+      "defense": 40,
+      "speed": 58,
+      "mystery": {
+        "name": "Névoa Sonífera",
+        "chakra": 25,
+        "cooldown": 3,
+        "targets": "enemies_front",
+        "damage_pct": 85,
+        "applies_state": "knockdown",
+        "effect": "Dano nos inimigos da frente e Derrubada (a fila de ação deles é adiada)."
+      },
+      "standard": {
+        "name": "Cajado Fumegante",
+        "damage_pct": 60,
+        "applies_state": "none"
+      },
+      "chase": {
+        "name": "Lança-Fumaça",
+        "trigger": "knockback",
+        "damage_pct": 25,
+        "applies_state": "knockdown",
+        "max_per_round": 1
+      },
+      "passive": {
+        "name": "Olhos de Cinza",
+        "effect": "A primeira perseguição da equipe em cada rodada causa +10% de dano."
+      }
+    },
+    {
+      "id": "nereo",
+      "name": "Nereo Lâmina-de-Sal",
+      "faction": "tide",
+      "role": "striker",
+      "hp": 950,
+      "attack": 110,
+      "defense": 40,
+      "speed": 60,
+      "mystery": {
+        "name": "Corte da Maré Alta",
+        "chakra": 20,
+        "cooldown": 3,
+        "targets": "enemies_front",
+        "damage_pct": 115,
+        "applies_state": "launch",
+        "effect": "Corte pesado que arremessa o alvo e ignora 50% do escudo dele."
+      },
+      "standard": {
+        "name": "Golpe de Sal",
+        "damage_pct": 70,
+        "applies_state": "none"
+      },
+      "chase": {
+        "name": "Reflexo da Maré",
+        "trigger": "launch",
+        "damage_pct": 30,
+        "applies_state": "knockback",
+        "max_per_round": 1
+      },
+      "passive": {
+        "name": "Lâmina Salmoura",
+        "effect": "+10% de dano; ataques contra alvos com escudo causam +25%."
+      }
+    },
+    {
+      "id": "dalva",
+      "name": "Dalva Recife",
+      "faction": "tide",
+      "role": "guardian",
+      "hp": 1150,
+      "attack": 94,
+      "defense": 60,
+      "speed": 40,
+      "mystery": {
+        "name": "Barreira de Coral",
+        "chakra": 20,
+        "cooldown": 2,
+        "targets": "ally_single",
+        "damage_pct": 90,
+        "applies_state": "none",
+        "effect": "Escudo de 90% do ataque no aliado alvo; reflete 20% do dano que ele absorver."
+      },
+      "standard": {
+        "name": "Cajado de Coral",
+        "damage_pct": 60,
+        "applies_state": "knockdown"
+      },
+      "chase": {
+        "name": "Recife Vivo",
+        "trigger": "launch",
+        "damage_pct": 25,
+        "applies_state": "knockback",
+        "max_per_round": 1
+      },
+      "passive": {
+        "name": "Pele de Coral",
+        "effect": "-15% de dano recebido na linha de frente."
+      }
+    },
+    {
+      "id": "mel",
+      "name": "Mel Maré-Mãe",
+      "faction": "tide",
+      "role": "support",
+      "hp": 1000,
+      "attack": 98,
+      "defense": 46,
+      "speed": 52,
+      "mystery": {
+        "name": "Maré Curativa",
+        "chakra": 15,
+        "cooldown": 2,
+        "targets": "ally_single",
+        "damage_pct": 100,
+        "applies_state": "none",
+        "effect": "Cura 100% do ataque e dissipa 1 estado negativo do alvo."
+      },
+      "standard": {
+        "name": "Espuma Firme",
+        "damage_pct": 60,
+        "applies_state": "launch"
+      },
+      "chase": {
+        "name": "Contracorrente",
+        "trigger": "knockdown",
+        "damage_pct": 20,
+        "applies_state": "none",
+        "max_per_round": 1
+      },
+      "passive": {
+        "name": "Onda de Chakra",
+        "effect": "No início da rodada, gera +8 de chakra para a equipe."
+      }
+    },
+    {
+      "id": "ligeia",
+      "name": "Ligeia Névoa-Fria",
+      "faction": "tide",
+      "role": "controller",
+      "hp": 890,
+      "attack": 102,
+      "defense": 38,
+      "speed": 57,
+      "mystery": {
+        "name": "Prisão de Vapor",
+        "chakra": 25,
+        "cooldown": 3,
+        "targets": "enemies_front",
+        "damage_pct": 85,
+        "applies_state": "knockdown",
+        "effect": "Dano e Derrubada nos inimigos da frente (prisão de vapor)."
+      },
+      "standard": {
+        "name": "Vapor Cortante",
+        "damage_pct": 60,
+        "applies_state": "none"
+      },
+      "chase": {
+        "name": "Redemoinho",
+        "trigger": "knockback",
+        "damage_pct": 25,
+        "applies_state": "knockdown",
+        "max_per_round": 1
+      },
+      "passive": {
+        "name": "Neblina Densa",
+        "effect": "Inimigos Derrubados recebem +15% de dano dos ataques da equipe."
+      }
+    },
+    {
+      "id": "tina",
+      "name": "Tina Espinho-Gêmeo",
+      "faction": "verdant",
+      "role": "striker",
+      "hp": 930,
+      "attack": 108,
+      "defense": 40,
+      "speed": 58,
+      "mystery": {
+        "name": "Rajada de Espinhos",
+        "chakra": 25,
+        "cooldown": 3,
+        "targets": "random_2",
+        "damage_pct": 85,
+        "applies_state": "launch",
+        "effect": "85% de dano em 2 inimigos aleatórios, arremessando-os; aplica Veneno (dano contínuo por 2 rodadas)."
+      },
+      "standard": {
+        "name": "Chicote de Cipó",
+        "damage_pct": 70,
+        "applies_state": "none"
+      },
+      "chase": {
+        "name": "Duplo Espinho",
+        "trigger": "launch",
+        "damage_pct": 30,
+        "applies_state": "knockback",
+        "max_per_round": 1
+      },
+      "passive": {
+        "name": "Peçonha Persistente",
+        "effect": "Os ataques de Tina aplicam Veneno (dano contínuo por 2 rodadas)."
+      }
+    },
+    {
+      "id": "aro",
+      "name": "Aro Cascão",
+      "faction": "verdant",
+      "role": "guardian",
+      "hp": 1150,
+      "attack": 92,
+      "defense": 62,
+      "speed": 38,
+      "mystery": {
+        "name": "Casco de Pedra-Viva",
+        "chakra": 25,
+        "cooldown": 3,
+        "targets": "self",
+        "damage_pct": 100,
+        "applies_state": "none",
+        "effect": "Escudo de 100% do ataque que ganha +25% de valor ao fim de cada rodada enquanto existir."
+      },
+      "standard": {
+        "name": "Casco Esmagador",
+        "damage_pct": 60,
+        "applies_state": "knockdown"
+      },
+      "chase": {
+        "name": "Garras de Raiz",
+        "trigger": "launch",
+        "damage_pct": 25,
+        "applies_state": "knockback",
+        "max_per_round": 1
+      },
+      "passive": {
+        "name": "Casca Dura",
+        "effect": "-15% de dano recebido; reflete 10% do dano de ataque padrão recebido."
+      }
+    },
+    {
+      "id": "yara",
+      "name": "Yara Seiva-Viva",
+      "faction": "verdant",
+      "role": "support",
+      "hp": 1020,
+      "attack": 96,
+      "defense": 46,
+      "speed": 50,
+      "mystery": {
+        "name": "Seiva Vital",
+        "chakra": 15,
+        "cooldown": 2,
+        "targets": "ally_single",
+        "damage_pct": 100,
+        "applies_state": "none",
+        "effect": "Cura 100% do ataque; o alvo regenera 6% do HP máximo por rodada durante 2 rodadas."
+      },
+      "standard": {
+        "name": "Folha Cortante",
+        "damage_pct": 60,
+        "applies_state": "launch"
+      },
+      "chase": {
+        "name": "Raízes Ágeis",
+        "trigger": "knockdown",
+        "damage_pct": 20,
+        "applies_state": "none",
+        "max_per_round": 1
+      },
+      "passive": {
+        "name": "Broto Renascido",
+        "effect": "No fim da rodada, cura 5% do HP do aliado com menos HP."
+      }
+    },
+    {
+      "id": "ivo",
+      "name": "Ívo Corda-Fina",
+      "faction": "verdant",
+      "role": "controller",
+      "hp": 880,
+      "attack": 100,
+      "defense": 40,
+      "speed": 54,
+      "mystery": {
+        "name": "Marionete Eremita",
+        "chakra": 25,
+        "cooldown": 3,
+        "targets": "enemies_front",
+        "damage_pct": 80,
+        "applies_state": "knockdown",
+        "effect": "A marionete investe: dano e Derrubada nos inimigos da frente."
+      },
+      "standard": {
+        "name": "Fio de Aço",
+        "damage_pct": 60,
+        "applies_state": "none"
+      },
+      "chase": {
+        "name": "Contra-Peso",
+        "trigger": "knockback",
+        "damage_pct": 25,
+        "applies_state": "knockdown",
+        "max_per_round": 1
+      },
+      "passive": {
+        "name": "Corda-Fina",
+        "effect": "Inimigos com estado aplicado pela equipe causam -10% de dano."
+      }
+    },
+    {
+      "id": "reia",
+      "name": "Reia Passo-Trovão",
+      "faction": "storm",
+      "role": "striker",
+      "hp": 930,
+      "attack": 115,
+      "defense": 36,
+      "speed": 70,
+      "mystery": {
+        "name": "Impacto do Trovão",
+        "chakra": 30,
+        "cooldown": 3,
+        "targets": "enemies_front",
+        "damage_pct": 130,
+        "applies_state": "launch",
+        "effect": "Dano devastador que arremessa o alvo e ignora 30% da defesa dele."
+      },
+      "standard": {
+        "name": "Golpe Trovejante",
+        "damage_pct": 75,
+        "applies_state": "launch"
+      },
+      "chase": {
+        "name": "Fenda do Raio",
+        "trigger": "launch",
+        "damage_pct": 35,
+        "applies_state": "knockback",
+        "max_per_round": 1
+      },
+      "passive": {
+        "name": "Iniciativa Trovejante",
+        "effect": "Age primeiro na rodada de abertura; +10% de velocidade."
+      }
+    },
+    {
+      "id": "aki",
+      "name": "Aki Contra-Corte",
+      "faction": "storm",
+      "role": "guardian",
+      "hp": 1100,
+      "attack": 95,
+      "defense": 56,
+      "speed": 46,
+      "mystery": {
+        "name": "Manto do Redemoinho",
+        "chakra": 20,
+        "cooldown": 2,
+        "targets": "self",
+        "damage_pct": 80,
+        "applies_state": "none",
+        "effect": "Escudo de 80% do ataque em si; enquanto durar, contra-ataca quem a atingir."
+      },
+      "standard": {
+        "name": "Lâmina Espelhada",
+        "damage_pct": 60,
+        "applies_state": "knockdown"
+      },
+      "chase": {
+        "name": "Corte Reverso",
+        "trigger": "launch",
+        "damage_pct": 25,
+        "applies_state": "knockback",
+        "max_per_round": 1
+      },
+      "passive": {
+        "name": "Espelho de Vento",
+        "effect": "Ao ser atingida por ataque padrão, contra-ataca com 40% do ataque (1x por rodada)."
+      }
+    },
+    {
+      "id": "alisio",
+      "name": "Alísio Sopro-Ligeiro",
+      "faction": "storm",
+      "role": "support",
+      "hp": 980,
+      "attack": 97,
+      "defense": 44,
+      "speed": 60,
+      "mystery": {
+        "name": "Brisa Guiadora",
+        "chakra": 15,
+        "cooldown": 2,
+        "targets": "ally_single",
+        "damage_pct": 90,
+        "applies_state": "none",
+        "effect": "Cura 90% do ataque e concede Aceleração (o alvo age antes dos inimigos na próxima rodada)."
+      },
+      "standard": {
+        "name": "Rajada Firme",
+        "damage_pct": 60,
+        "applies_state": "launch"
+      },
+      "chase": {
+        "name": "Vento de Cauda",
+        "trigger": "knockdown",
+        "damage_pct": 20,
+        "applies_state": "none",
+        "max_per_round": 1
+      },
+      "passive": {
+        "name": "Ritmo de Batalha",
+        "effect": "A primeira perseguição da equipe por rodada gera +5 de chakra."
+      }
+    },
+    {
+      "id": "volta",
+      "name": "Volta Ciclone",
+      "faction": "storm",
+      "role": "controller",
+      "hp": 900,
+      "attack": 103,
+      "defense": 38,
+      "speed": 59,
+      "mystery": {
+        "name": "Tempestade Circular",
+        "chakra": 30,
+        "cooldown": 4,
+        "targets": "enemies_all",
+        "damage_pct": 80,
+        "applies_state": "launch",
+        "effect": "80% de dano em todos os inimigos, arremessando-os."
+      },
+      "standard": {
+        "name": "Discos de Vento",
+        "damage_pct": 60,
+        "applies_state": "none"
+      },
+      "chase": {
+        "name": "Descarga de Acompanhamento",
+        "trigger": "knockback",
+        "damage_pct": 25,
+        "applies_state": "knockdown",
+        "max_per_round": 1
+      },
+      "passive": {
+        "name": "Carga Estática",
+        "effect": "Inimigos Arremessados perdem 5 de velocidade até o fim da rodada."
+      }
+    }
+  ]
+}

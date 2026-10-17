@@ -1,0 +1,67 @@
+name: Build & Balance CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Cron noturno: 07:00 UTC (04:00 em São Paulo) — Monte Carlo completo
+    - cron: "0 7 * * *"
+
+jobs:
+  test:
+    name: Testes (determinismo · simetria · combate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test
+        run: cargo test --workspace --release
+
+  balance:
+    name: Gate de equilíbrio (DWC v2 · 1v1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Simulador Monte Carlo + gate
+        run: cargo run --release -p turnrush-sim -- --quick --gate --out balance-report.json
+      - name: Publica relatório de balanceamento
+        uses: actions/upload-artifact@v4
+        with:
+          name: balance-report
+          path: balance-report.json
+
+  balance-formation:
+    name: Gate de equilíbrio (Formação 4v4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Monte Carlo 4v4 + gate
+        run: cargo run --release -p turnrush-sim -- --formation4v4 --formation-gate --formation-sims 150 --out formation-report.json
+      - name: Publica relatório 4v4
+        uses: actions/upload-artifact@v4
+        with:
+          name: formation-report
+          path: formation-report.json
+
+  build-linux:
+    name: Build Linux x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo build --release
+        run: cargo build --release --workspace
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: turnrush-linux-x64
+          path: |
+            target/release/turnrush-sim

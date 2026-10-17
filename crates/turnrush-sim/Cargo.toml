@@ -1,0 +1,9 @@
+[package]
+name = "turnrush-sim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Simulador Monte Carlo + calibrador DWC do TurnRush (verificação de equilíbrio no CI)"
+
+[dependencies]
+turnrush-core = { path = "../turnrush-core" }

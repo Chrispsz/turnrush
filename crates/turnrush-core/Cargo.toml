@@ -1,0 +1,6 @@
+[package]
+name = "turnrush-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Motor determinístico do TurnRush: combate por turnos, cartas, draft simétrico e balanceamento DWC/LCE"

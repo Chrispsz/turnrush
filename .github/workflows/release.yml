@@ -1,0 +1,25 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release-linux:
+    name: Release Linux (binário estático musl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Build musl estático
+        run: cargo build --release -p turnrush-sim --target x86_64-unknown-linux-musl
+      - name: Empacota
+        run: |
+          cd target/x86_64-unknown-linux-musl/release
+          tar czf ../../../turnrush-linux-x64.tar.gz turnrush-sim
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: turnrush-linux-x64.tar.gz
