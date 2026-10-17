@@ -1,0 +1,4 @@
+#!/bin/sh
+# AppRun do TurnRush: resolve o diretório real e executa o binário
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/usr/bin/turnrush-sim" "$@"

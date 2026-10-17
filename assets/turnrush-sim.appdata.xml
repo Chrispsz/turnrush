@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="application">
+  <id>turnrush-sim</id>
+  <name>TurnRush Sim</name>
+  <summary>Simulador Monte Carlo de equilíbrio do roguelike tático TurnRush</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>Simulador de balanceamento do TurnRush: rodadas rápidas de auto-batalha com
+    cadeias de combo estilo Naruto Online. Executa Monte Carlo de composições,
+    calibração DWC/LCE, gates de winrate 1v1 e Formation 4v4, e escreve logs de
+    sessão completos em ~/TurnRush/logs.</p>
+  </description>
+  <launchable type="desktop-id">turnrush-sim.desktop</launchable>
+  <provides>
+    <binary>turnrush-sim</binary>
+  </provides>
+  <releases>
+    <release version="0.3.0" date="2026-10-17">
+      <description>
+        <p>Engine v0.3: modo Formation 4v4 com cadeias de chase, roster data-driven
+        de 16 personagens, logs de sessão completos e gates de balanceamento.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

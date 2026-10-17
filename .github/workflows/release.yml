@@ -4,22 +4,78 @@ on:
   push:
     tags: ["v*"]
 
+permissions:
+  contents: write
+
 jobs:
   release-linux:
-    name: Release Linux (binário estático musl)
+    name: Release Linux (musl estático + AppImage)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-musl
+
+      - name: Instalar musl-tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Garantir target musl no toolchain ativo
+        run: rustup target add x86_64-unknown-linux-musl
+
       - name: Build musl estático
         run: cargo build --release -p turnrush-sim --target x86_64-unknown-linux-musl
-      - name: Empacota
+
+      - name: Testes rápidos (sanidade do binário de release)
+        run: cargo test --release -p turnrush-core
+
+      - name: Empacota tar.gz
         run: |
           cd target/x86_64-unknown-linux-musl/release
           tar czf ../../../turnrush-linux-x64.tar.gz turnrush-sim
+
+      - name: Monta AppDir e AppImage
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          APPDIR="turnrush.AppDir"
+          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/metainfo" "$APPDIR/usr/share/icons/hicolor/256x256/apps" "$APPDIR/usr/share/icons/hicolor/128x128/apps"
+
+          cp target/x86_64-unknown-linux-musl/release/turnrush-sim "$APPDIR/usr/bin/"
+          chmod +x "$APPDIR/usr/bin/turnrush-sim"
+
+          cp assets/AppRun "$APPDIR/"
+          chmod +x "$APPDIR/AppRun"
+          cp assets/turnrush-sim.desktop "$APPDIR/"
+          cp assets/turnrush-sim.appdata.xml "$APPDIR/usr/share/metainfo/"
+          cp assets/turnrush.png "$APPDIR/turnrush.png"
+          cp assets/turnrush.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/turnrush.png"
+          cp assets/turnrush-128.png "$APPDIR/usr/share/icons/hicolor/128x128/apps/turnrush.png"
+          cp assets/turnrush.png "$APPDIR/.DirIcon"
+
+          # LICENSE de referência dentro do AppDir (boa prática AppImage)
+          cp LICENSE "$APPDIR/" 2>/dev/null || true
+
+          curl -fsSL -o appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run \
+            --comp zstd \
+            "$APPDIR" "TurnRush-${VERSION}-x86_64.AppImage"
+
+          chmod +x "TurnRush-${VERSION}-x86_64.AppImage"
+
+      - name: Smoke test do AppImage
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          APPIMAGE_EXTRACT_AND_RUN=1 "./TurnRush-${VERSION}-x86_64.AppImage" --quick --sims 2 --iters 1 --out /tmp/smoke.json
+          head -c 300 /tmp/smoke.json
+
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          files: turnrush-linux-x64.tar.gz
+          files: |
+            turnrush-linux-x64.tar.gz
+            TurnRush-*-x86_64.AppImage
+          generate_release_notes: true
