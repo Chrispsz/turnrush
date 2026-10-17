@@ -39,7 +39,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           APPDIR="turnrush.AppDir"
-          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/metainfo" "$APPDIR/usr/share/icons/hicolor/256x256/apps" "$APPDIR/usr/share/icons/hicolor/128x128/apps"
+          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/metainfo" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps" "$APPDIR/usr/share/icons/hicolor/128x128/apps"
 
           cp target/x86_64-unknown-linux-musl/release/turnrush-sim "$APPDIR/usr/bin/"
           chmod +x "$APPDIR/usr/bin/turnrush-sim"
@@ -47,7 +47,8 @@ jobs:
           cp assets/AppRun "$APPDIR/"
           chmod +x "$APPDIR/AppRun"
           cp assets/turnrush-sim.desktop "$APPDIR/"
-          cp assets/turnrush-sim.appdata.xml "$APPDIR/usr/share/metainfo/"
+          cp assets/turnrush-sim.desktop "$APPDIR/usr/share/applications/"
+          cp assets/io.github.Chrispsz.turnrush-sim.metainfo.xml "$APPDIR/usr/share/metainfo/"
           cp assets/turnrush.png "$APPDIR/turnrush.png"
           cp assets/turnrush.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/turnrush.png"
           cp assets/turnrush-128.png "$APPDIR/usr/share/icons/hicolor/128x128/apps/turnrush.png"

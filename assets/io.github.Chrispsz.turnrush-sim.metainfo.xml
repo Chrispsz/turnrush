@@ -11,10 +11,11 @@
     calibração DWC/LCE, gates de winrate 1v1 e Formation 4v4, e escreve logs de
     sessão completos em ~/TurnRush/logs.</p>
   </description>
-  <developer_name>Chrispsz</developer_name>
+  <developer>
+    <name>Chrispsz</name>
+  </developer>
   <url type="homepage">https://github.com/Chrispsz/turnrush</url>
   <url type="bugtracker">https://github.com/Chrispsz/turnrush/issues</url>
-  <launchable type="desktop-id">turnrush-sim.desktop</launchable>
   <provides>
     <binary>turnrush-sim</binary>
   </provides>
