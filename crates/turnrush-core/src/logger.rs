@@ -17,6 +17,10 @@
 //!   arquitetura, host e contagem de CPUs.
 //! - **Panic hook global**: captura panics e escreve `crash-*.log` com mensagem,
 //!   backtrace e as últimas ~200 linhas da sessão.
+//! - **Captura de sinais (unix)**: `SIGINT`/`SIGTERM`/`SIGHUP` (Ctrl+C, `kill`,
+//!   terminal fechado) registram `session_interrupted` com o sinal, tempo
+//!   decorrido e contagem de eventos antes de sair com código 128+sig — a
+//!   sessão nunca termina sem explicação.
 //! - Rotação: mantém só as últimas N sessões (padrão 20; `TURNRUSH_LOG_KEEP`).
 //!
 //! Variáveis de ambiente:
@@ -289,6 +293,8 @@ pub struct Logger {
 static LOG: Mutex<Option<Arc<Logger>>> = Mutex::new(None);
 static HOOK_ONCE: Once = Once::new();
 static FLUSHER_ONCE: Once = Once::new();
+#[cfg(unix)]
+static SIGNAL_ONCE: Once = Once::new();
 
 /// Informações da sessão criada por `init`/`init_cfg`.
 #[derive(Clone, Debug)]
@@ -366,6 +372,8 @@ pub fn init_cfg(cfg: LoggerCfg) -> Result<SessionInfo, String> {
     }
     HOOK_ONCE.call_once(install_panic_hook);
     FLUSHER_ONCE.call_once(spawn_flusher);
+    #[cfg(unix)]
+    SIGNAL_ONCE.call_once(crate::logger::sinais::install);
     Ok(info)
 }
 
@@ -524,7 +532,7 @@ impl Logger {
             Level::Info,
             "session_end",
             "encerramento limpo da sessão",
-            &[("tempo_total_s", V::F(total)), ("eventos", V::U(events))],
+            &[("tempo_total_ms", V::U((total * 1000.0) as u64)), ("eventos", V::U(events))],
         );
         self.flush();
     }
@@ -713,6 +721,152 @@ pub fn write_crash_report(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Sinais (unix) — Ctrl+C/kill/sessão encerrada não deixam a sessão muda
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Nome legível de um sinal Linux conhecido.
+pub fn sig_nome(sig: i32) -> &'static str {
+    match sig {
+        1 => "SIGHUP",
+        2 => "SIGINT",
+        13 => "SIGPIPE",
+        15 => "SIGTERM",
+        _ => "SINAL-DESCONHECIDO",
+    }
+}
+
+/// Chamado pela thread monitora de sinais: registra `session_interrupted`
+/// com o sinal, tempo decorrido e contagem de eventos, descarrega os buffers
+/// e encerra o processo com o código convencional `128 + sig`.
+#[cfg(unix)]
+fn registrar_interrupcao(sig: i32) {
+    let codigo = registra_evento_interrupcao(sig);
+    std::process::exit(codigo);
+}
+
+/// Escreve o evento `session_interrupted` (sem encerrar o processo) e retorna
+/// o código de saída convencional `128 + sig`. Separado do exit para testes.
+#[cfg(unix)]
+fn registra_evento_interrupcao(sig: i32) -> i32 {
+    let codigo = 128 + sig;
+    let Some(l) = global() else { return codigo };
+    let (total, events) = {
+        let g = match l.inner.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        (g.start.elapsed().as_secs_f32(), g.events)
+    };
+    l.kv(
+        Level::Info,
+        "session_interrupted",
+        "sessão interrompida por sinal",
+        &[
+            ("sinal", V::S(sig_nome(sig))),
+            ("sig", V::I(sig as i64)),
+            ("tempo_total_ms", V::U((total * 1000.0) as u64)),
+            ("eventos", V::U(events)),
+            ("exit_code", V::I(codigo as i64)),
+        ],
+    );
+    l.flush();
+    codigo
+}
+
+#[cfg(unix)]
+mod sinais {
+    use std::io::Read;
+    use std::os::fd::FromRawFd;
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    // FFI mínima contra a libc — o binário Rust já liga contra ela em todo
+    // alvo unix, então declaramos só o necessário e mantemos ZERO crates.
+    // Nomes escolhidos para não colidir com símbolos de runtime da std
+    // (por isso `writev` em vez de `write`; a thread monitora usa std::fs).
+    #[repr(C)]
+    struct Iovec {
+        base: *const u8,
+        len: usize,
+    }
+    unsafe extern "C" {
+        fn signal(signum: i32, handler: usize) -> usize;
+        fn pipe(fds: *mut i32) -> i32;
+        fn writev(fd: i32, iov: *const Iovec, iovcnt: i32) -> isize;
+    }
+
+    const SIGHUP: i32 = 1;
+    const SIGINT: i32 = 2;
+    const SIGTERM: i32 = 15;
+    const SIG_ERR: usize = usize::MAX; // (usize)-1
+
+    /// Extremidade de escrita do self-pipe (só sinal-seguro).
+    static PIPE_W: AtomicI32 = AtomicI32::new(-1);
+
+    /// Handler: async-signal-safe por design — uma única `writev` de 1 byte no
+    /// self-pipe; todo o resto acontece na thread monitora (contexto normal).
+    extern "C" fn ao_sinal(sig: i32) {
+        let fd = PIPE_W.load(Ordering::Relaxed);
+        if fd >= 0 {
+            let b = [sig as u8; 1];
+            let iov = Iovec { base: b.as_ptr(), len: 1 };
+            unsafe { writev(fd, &iov, 1) };
+        }
+    }
+
+    /// Instala a captura (idempotente, chamada uma vez por processo).
+    pub(super) fn install() {
+        let mut fds = [0i32; 2];
+        if unsafe { pipe(fds.as_mut_ptr()) } != 0 {
+            super::kv(
+                super::Level::Warn,
+                "signal_capture",
+                "sem self-pipe; sessão segue sem captura de sinais",
+                &[],
+            );
+            return;
+        }
+        PIPE_W.store(fds[1], Ordering::Relaxed);
+        let mut ok = true;
+        let mut instalados = 0u64;
+        for s in [SIGHUP, SIGINT, SIGTERM] {
+            if unsafe { signal(s, ao_sinal as extern "C" fn(i32) as usize) } == SIG_ERR {
+                ok = false;
+                break;
+            }
+            instalados += 1;
+        }
+        if !ok {
+            super::kv(
+                super::Level::Warn,
+                "signal_capture",
+                "signal() falhou; sessão segue sem captura de sinais",
+                &[("instalados", super::V::U(instalados))],
+            );
+            return;
+        }
+        super::kv(
+            super::Level::Info,
+            "signal_capture",
+            "captura de sinais ativa (SIGINT/SIGTERM/SIGHUP)",
+            &[("instalados", super::V::U(instalados))],
+        );
+        let rd = fds[0];
+        let _ = std::thread::Builder::new()
+            .name("turnrush-log-signal".to_string())
+            .spawn(move || {
+                // contexto normal de Rust: leitura via std (sem FFI)
+                let mut f = unsafe { std::fs::File::from_raw_fd(rd) };
+                let mut b = [0u8; 1];
+                // enquanto chegarem bytes do self-pipe, interrompe a sessão
+                while let Ok(()) = f.read_exact(&mut b) {
+                    super::registrar_interrupcao(b[0] as i32);
+                }
+                // pipe fechado/erro — encerra a monitora
+            });
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Testes
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -881,7 +1035,46 @@ mod tests {
         global().unwrap().shutdown();
         let text = fs::read_to_string(&info.text).unwrap();
         assert!(text.contains("session_end"));
-        assert!(text.contains("tempo_total_s="));
+        assert!(text.contains("tempo_total_ms="));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nomes_de_sinais_conhecidos() {
+        assert_eq!(sig_nome(2), "SIGINT");
+        assert_eq!(sig_nome(15), "SIGTERM");
+        assert_eq!(sig_nome(1), "SIGHUP");
+        assert_eq!(sig_nome(13), "SIGPIPE");
+        assert_eq!(sig_nome(77), "SINAL-DESCONHECIDO");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interrupcao_registra_evento_e_codigo() {
+        // Chama registra_evento_interrupcao DIRETAMENTE (sem sinal real e sem
+        // exit — o exit acontece só em registrar_interrupcao, que roda na
+        // thread monitora do binário). E2E real documentado em docs/LOGS.md.
+        let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let dir = temp_dir("interrupt");
+        let info = init_cfg(LoggerCfg { dir: Some(dir.clone()), seed: 3, level: Some(Level::Info), keep: Some(0) })
+            .expect("init");
+        global().unwrap().event(Level::Info, "antes_do_sinal", "x");
+
+        let codigo = registra_evento_interrupcao(2); // SIGINT, sem exit
+        assert_eq!(codigo, 130, "código convencional 128+2");
+
+        let text = fs::read_to_string(&info.text).unwrap();
+        assert!(text.contains("antes_do_sinal"), "evento pré-sinal presente");
+        assert!(text.contains("session_interrupted"), "evento de interrupção presente: {text}");
+        assert!(text.contains("sinal=SIGINT"));
+        assert!(text.contains("exit_code=130"));
+
+        let json = fs::read_to_string(&info.jsonl).unwrap();
+        let linha = json.lines().find(|l| l.contains("session_interrupted")).expect("linha jsonl");
+        let ev = crate::json::parse(linha).expect("jsonl válido");
+        assert_eq!(ev.get("event").and_then(Json::as_str), Some("session_interrupted"));
+        assert_eq!(ev.get("data").map(|d| d.get("sig")).and_then(|v| v.and_then(Json::as_int)), Some(2));
+        assert!(linha.contains("tempo_total_ms"), "tempo em ms (contrato inteiro) na linha: {linha}");
         let _ = fs::remove_dir_all(&dir);
     }
 }

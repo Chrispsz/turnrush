@@ -12,6 +12,10 @@ $HOME/TurnRush/logs/          ← diretório padrão (fácil na home)
 └── crash-20261017-180602.log              ← relatório de crash (quando ocorre)
 ```
 
+> Exemplo real em produção: sessões de `chris-pc` (CachyOS, kernel 7.2.9,
+> 12 CPUs) geradas pelo AppImage da release — o cabeçalho identifica a
+> máquina de quem reportou o problema automaticamente.
+
 Variável `TURNRUSH_LOG_DIR` sobrescreve o diretório (útil para CI: defina
 `TURNRUSH_LOG_DIR=$PWD/.turnrush-logs`). Se `$HOME` não existir, o fallback é
 `./turnrush-logs`.
@@ -36,11 +40,35 @@ Um evento JSON por linha — ideal para filtrar/analisar:
  "data":{"personagens":16,"versao":2}}
 {"ts":"12.751","level":"info","event":"formation_gate","msg":"PASSOU"}
 {"ts":"12.751","level":"info","event":"session_end","msg":"encerramento limpo da sessão",
- "data":{"tempo_total_s":12.751,"eventos":4}}
+ "data":{"tempo_total_ms":12751,"eventos":4}}
 ```
 
 Campos: `ts` (segundos desde o início da sessão), `level` (debug/info/warn/error),
 `event` (identificador estável), `msg` (texto humano) e `data` (pares chave-valor).
+> Contrato: `data` usa **inteiros** (tempos em ms) — o parser JSON interno aceita
+> inteiros por design; nada de float serializado.
+
+## Sessão interrompida (Ctrl+C, kill, terminal fechado)
+
+O logger captura `SIGINT`, `SIGTERM` e `SIGHUP` (zero dependências: FFI mínima
+de `signal`/`pipe`/`writev` + self-pipe + thread monitora — handler async-signal-safe
+por design). Ao receber o sinal, a sessão registra o evento final antes de sair:
+
+```json
+{"ts":"2.000","level":"info","event":"session_interrupted","msg":"sessão interrompida por sinal",
+ "data":{"sinal":"SIGINT","sig":2,"tempo_total_ms":1999,"eventos":1,"exit_code":130}}
+```
+
+Código de saída convencional `128+sig` (130 Ctrl+C, 143 kill, 129 HUP).
+A instalação em si também é logada no início da sessão (`signal_capture`),
+com warn explícito se a captura não puder ser ativada.
+
+Verificação E2E (binário real, não só testes de unidade):
+
+```bash
+turnrush-sim &  PID=$!; sleep 2; kill -INT $PID; wait $PID   # → exit 130
+grep session_interrupted ~/TurnRush/logs/session-*.jsonl | tail -1
+```
 
 ## Relatório de crash
 
