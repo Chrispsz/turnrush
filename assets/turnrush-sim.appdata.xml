@@ -1,16 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<component type="application">
-  <id>turnrush-sim</id>
-  <name>TurnRush Sim</name>
-  <summary>Simulador Monte Carlo de equilíbrio do roguelike tático TurnRush</summary>
+<component type="desktop-application">
+  <id>io.github.Chrispsz.turnrush-sim</id>
   <metadata_license>MIT</metadata_license>
   <project_license>MIT</project_license>
+  <name>TurnRush Sim</name>
+  <summary>Simulador Monte Carlo de equilíbrio do roguelike tático TurnRush</summary>
   <description>
     <p>Simulador de balanceamento do TurnRush: rodadas rápidas de auto-batalha com
     cadeias de combo estilo Naruto Online. Executa Monte Carlo de composições,
     calibração DWC/LCE, gates de winrate 1v1 e Formation 4v4, e escreve logs de
     sessão completos em ~/TurnRush/logs.</p>
   </description>
+  <developer_name>Chrispsz</developer_name>
+  <url type="homepage">https://github.com/Chrispsz/turnrush</url>
+  <url type="bugtracker">https://github.com/Chrispsz/turnrush/issues</url>
   <launchable type="desktop-id">turnrush-sim.desktop</launchable>
   <provides>
     <binary>turnrush-sim</binary>
