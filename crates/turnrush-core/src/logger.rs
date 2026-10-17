@@ -943,8 +943,14 @@ mod tests {
         let first = crate::json::parse(lines[0]).expect("session_start deve ser JSON válido");
         assert_eq!(first.get("event").and_then(Json::as_str), Some("session_start"));
         assert_eq!(first.get("data").map(|d| d.get("seed")).and_then(|v| v.and_then(Json::as_int)), Some(12345));
-        let ev = crate::json::parse(lines[1]).expect("evento deve ser JSON válido");
-        assert_eq!(ev.get("event").and_then(Json::as_str), Some("teste_evento"));
+        // NÃO indexar linhas: o init pode emitir signal_capture (uma vez por
+        // processo) no arquivo do primeiro teste que inicializar o logger.
+        let ev = lines
+            .iter()
+            .skip(1)
+            .find(|l| l.contains("\"event\":\"teste_evento\""))
+            .map(|l| crate::json::parse(l).expect("teste_evento deve ser JSON válido"))
+            .expect("teste_evento deve estar no jsonl");
         for campo in ["ts", "level", "event", "data"] {
             assert!(ev.get(campo).is_some(), "campo '{campo}' ausente no jsonl");
         }
