@@ -11,10 +11,14 @@ bevy = { version = "0.20", default-features = false, features = [
   "bevy_winit",
   "bevy_render",
   "bevy_core_pipeline",
-  "bevy_ui",
+  # bevy_ui_render = UiPlugin + UiRenderPlugin (no Bevy 0.20 o render da UI
+  # é um crate separado; só "bevy_ui" roda layout/interação mas DESENHA NADA)
+  "bevy_ui_render",
   "bevy_text",
   "bevy_state",
+  "bevy_log",
   "default_font",
+  "png",
   "multi_threaded",
   "x11",
 ] }

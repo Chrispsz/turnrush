@@ -4,6 +4,11 @@
 //! - sem argumentos → abre a janela do jogo;
 //! - `--check`     → verificação headless (sem janela): roster embutido +
 //!   batalha real do engine + parser de eventos. Usado no CI/smoke test.
+//! - `--shot <caminho_base>` → abre a janela, navega menu → draft → batalha,
+//!   captura um PNG de cada tela (`<base>_menu.png`, `<base>_draft.png`,
+//!   `<base>_battle.png`) e sai. Prova de renderização real sem interação —
+//!   funciona com Xvfb + driver por software (`WGPU_BACKEND=vulkan` +
+//!   lavapipe, por exemplo).
 
 mod app;
 mod battle_log;
@@ -14,7 +19,18 @@ fn main() {
         checar_headless();
         return;
     }
-    app::run();
+    app::run(parse_shot(&args));
+}
+
+/// Parseia `--shot <caminho_base>`; devolve `None` quando ausente.
+fn parse_shot(args: &[String]) -> Option<app::ShotOpts> {
+    let i = args.iter().position(|a| a == "--shot")?;
+    let path = args
+        .get(i + 1)
+        .filter(|p| !p.starts_with("--"))
+        .cloned()
+        .unwrap_or_else(|| "/tmp/turnrush-shot".to_string());
+    Some(app::ShotOpts { path })
 }
 
 /// Verificação sem janela: prova que roster + engine + parser funcionam.

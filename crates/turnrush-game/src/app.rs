@@ -15,6 +15,20 @@
 //!   eventos em ritmo legível. Linhas desconhecidas continuam visíveis.
 //! - **Logs de sessão completos**: o mesmo logger do engine (`~/TurnRush/logs`).
 //!
+//! Lições de depuração (v0.3.0 → v0.4.0) — a janela abria em BRANCO na
+//! v0.3.0 e eram TRÊS causas somadas, nenhuma visível no `--check` headless:
+//! - **`Camera2d` é obrigatório**: UI do Bevy não renderiza sem câmera.
+//! - **`bevy_ui_render` é obrigatório no Bevy 0.20**: o render da UI virou
+//!   crate separado; só a feature `bevy_ui` roda layout/interação e DESENHA
+//!   NADA. E `Node::default()` é `Row` — telas em coluna precisam de
+//!   `FlexDirection::Column` explícito.
+//! - **Queries de `Text` devem ser disjuntas**: dois `Query<&mut Text>` com
+//!   acesso sobreposto panica ao inicializar o sistema (`battle_enter`).
+//! - **Fonte default é subset ASCII**: substituímos por DejaVu Sans Mono
+//!   embutida (via `AssetId::default()`) — acentos pt-BR agora renderizam.
+//! - **`--shot <base>`**: navega menu → draft → batalha, salva 3 PNGs e sai —
+//!   prova de renderização real sem interação (Xvfb + lavapipe/`WGPU_BACKEND`).
+//!
 //! NOTA: usamos `Button`/`Interaction` (deprecados no Bevy 0.20, removidos
 //! depois) porque ainda funcionam e mantêm o MVP simples; migração para
 //! picking + `Pressed` fica para a v0.5.
@@ -22,6 +36,7 @@
 #![allow(deprecated)]
 
 use bevy::prelude::*;
+use bevy::render::view::window::screenshot::{save_to_disk, Screenshot};
 use bevy::text::FontSize;
 use bevy::window::WindowResolution;
 use std::collections::HashMap;
@@ -107,6 +122,39 @@ pub struct DraftRes {
     pub offers: [Option<usize>; 8],
 }
 
+/// Fonte embutida: DejaVu Sans Mono (licença Bitstream Vera/DejaVu — livre,
+/// redistribuição permitida). Cobertura pt-BR completa — substitui o subset
+/// ASCII da fonte default do Bevy, que renderizava acentos como □.
+const DEFAULT_FONT_TTF: &[u8] = include_bytes!("../assets/DejaVuSansMono.ttf");
+
+/// Opções do modo de diagnóstico `--shot <caminho_base>`:
+/// navega menu → draft → batalha capturando um PNG de cada tela e sai —
+/// prova de renderização real sem interação (Xvfb/CI).
+#[derive(Clone, Debug)]
+pub struct ShotOpts {
+    pub path: String,
+}
+
+/// Fases do modo `--shot`.
+#[derive(Clone, Copy, PartialEq)]
+enum ShotPhase {
+    Menu,
+    MenuSalvo,
+    Draft,
+    DraftSalvo,
+    Batalha,
+    BatalhaSalvo,
+}
+
+/// Estado interno do modo `--shot`.
+#[derive(Resource)]
+struct ShotState {
+    base: String,
+    phase: ShotPhase,
+    timer: f32,
+    frames: u64,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Marcadores de UI
 // ─────────────────────────────────────────────────────────────────────────────
@@ -146,6 +194,11 @@ pub struct UnitPanel {
     pub base_border: Color,
     pub name_text: Entity,
 }
+
+/// Marca os textos de nome dos painéis — garante queries disjuntas de `Text`
+/// (com `BattleHeader`/`BattleLogText`) e evita panic de acesso conflitante.
+#[derive(Component)]
+pub struct UnitNameText;
 
 #[derive(Component)]
 pub struct UnitBarFill(pub usize);
@@ -199,7 +252,7 @@ fn faction_color(f: &str) -> Color {
 // App
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub fn run() {
+pub fn run(shot: Option<ShotOpts>) {
     // Logs de sessão (o "script de tudo") — o mesmo diretório do engine.
     let seed = turnrush_core::logger::unix_nanos() as u64;
     let _ = turnrush_core::logger::init(seed);
@@ -211,20 +264,41 @@ pub fn run() {
     );
 
     App::new()
-        .add_plugins(DefaultPlugins.set(bevy::window::WindowPlugin {
-            primary_window: Some(Window {
-                title: "TurnRush".into(),
-                resolution: WindowResolution::new(1280, 720),
-                ..default()
-            }),
-            ..default()
-        }))
+        .add_plugins(
+            DefaultPlugins
+                .set(bevy::log::LogPlugin {
+                    filter: "info,wgpu=info,naga=warn".into(),
+                    level: bevy::log::Level::INFO,
+                    ..default()
+                })
+                .set(bevy::window::WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "TurnRush".into(),
+                        resolution: WindowResolution::new(1280, 720),
+                        ..default()
+                    }),
+                    ..default()
+                }),
+        )
         .init_state::<GameState>()
+        .insert_resource(ClearColor(BG))
         .insert_resource(new_run())
         .init_resource::<DraftRes>()
         .insert_resource(new_playback_placeholder())
-        .add_systems(Startup, setup_roots)
-        .add_systems(Update, sync_root_visibility)
+        .add_systems(
+            Startup,
+            (spawn_camera, override_default_font, setup_roots, move |mut cmds: Commands| {
+                if let Some(s) = shot.clone() {
+                    cmds.insert_resource(ShotState {
+                        base: s.path,
+                        phase: ShotPhase::Menu,
+                        timer: 2.0,
+                        frames: 0,
+                    });
+                }
+            }),
+        )
+        .add_systems(Update, (sync_root_visibility, shot_tick))
         // Menu
         .add_systems(Update, menu_interactions.run_if(in_state(GameState::Menu)))
         // Draft
@@ -245,6 +319,149 @@ pub fn run() {
         .add_systems(OnEnter(GameState::GameOver), gameover_enter)
         .add_systems(Update, gameover_click.run_if(in_state(GameState::GameOver)))
         .run();
+}
+
+/// Câmera 2D — SEM ela o Bevy UI não renderiza nada (janela em branco).
+fn spawn_camera(mut cmds: Commands) {
+    cmds.spawn(Camera2d);
+}
+
+/// Substitui a fonte default (subset ASCII do Bevy) pela DejaVu Sans Mono
+/// embutida — vale para todo `TextFont` sem fonte explícita.
+fn override_default_font(mut fonts: ResMut<Assets<Font>>) {
+    let fonte = Font::from_bytes(DEFAULT_FONT_TTF.to_vec());
+    fonts
+        .insert(AssetId::default(), fonte)
+        .expect("falha ao substituir a fonte default");
+}
+
+/// `base.png` → `base_menu.png` (sufixo antes da extensão; sem extensão → .png).
+fn variante(base: &str, sufixo: &str) -> String {
+    let (stem, ext) = match base.rfind('.') {
+        // ponto só é extensão se não fizer parte de um diretório (ex.: "./x")
+        Some(i) if !base[i..].contains('/') => (&base[..i], &base[i + 1..]),
+        _ => (base, "png"),
+    };
+    format!("{stem}{sufixo}.{ext}")
+}
+
+/// PNG já gravado (não vazio) no disco?
+fn gravado(path: &str) -> bool {
+    std::path::Path::new(path)
+        .metadata()
+        .map(|m| m.len() > 0)
+        .unwrap_or(false)
+}
+
+/// Diagnóstico de UI: estado das raízes + câmera default (log de sessão).
+fn logar_ui(
+    roots: &Query<(&StateRoot, &Visibility, &InheritedVisibility, &ViewVisibility)>,
+    ui_nodes: &Query<(), With<Node>>,
+    cameras: &Query<(), With<Camera2d>>,
+    default_ui_camera: &DefaultUiCamera,
+) {
+    for (root, vis, inh, view) in roots.iter() {
+        turnrush_core::logger::kv(
+            turnrush_core::logger::Level::Info,
+            "ui_root",
+            "raiz de estado",
+            &[
+                ("estado", turnrush_core::logger::V::S(&format!("{:?}", root.0))),
+                ("vis", turnrush_core::logger::V::S(&format!("{:?}", vis))),
+                ("inherited", turnrush_core::logger::V::S(&format!("{:?}", *inh))),
+                ("view", turnrush_core::logger::V::S(&format!("{:?}", *view))),
+            ],
+        );
+    }
+    turnrush_core::logger::kv(
+        turnrush_core::logger::Level::Info,
+        "ui_stats",
+        "resumo da UI",
+        &[
+            ("nos_ui", turnrush_core::logger::V::U(ui_nodes.iter().count() as u64)),
+            ("cameras_2d", turnrush_core::logger::V::U(cameras.iter().count() as u64)),
+            ("cam_ui_default", turnrush_core::logger::V::S(&format!("{:?}", default_ui_camera.get()))),
+        ],
+    );
+}
+
+/// Ciclo do modo `--shot`: navega menu → draft → batalha, captura um PNG de
+/// cada tela e sai. Exercita `draft_enter`/`battle_enter` em runtime.
+#[allow(clippy::too_many_arguments)]
+fn shot_tick(
+    time: Res<Time>,
+    mut cmds: Commands,
+    mut exit: MessageWriter<AppExit>,
+    mut st: Option<ResMut<ShotState>>,
+    mut next: ResMut<NextState<GameState>>,
+    mut run: ResMut<RunRes>,
+    mut pb: ResMut<PlaybackRes>,
+    roots: Query<(&StateRoot, &Visibility, &InheritedVisibility, &ViewVisibility)>,
+    ui_nodes: Query<(), With<Node>>,
+    cameras: Query<(), With<Camera2d>>,
+    default_ui_camera: DefaultUiCamera,
+) {
+    let Some(st) = st.as_deref_mut() else { return };
+    st.frames += 1;
+    st.timer -= time.delta_secs();
+
+    let menu_png = variante(&st.base, "_menu");
+    let draft_png = variante(&st.base, "_draft");
+    let batalha_png = variante(&st.base, "_battle");
+    let logger = turnrush_core::logger::kv;
+    let (info, s, u) = (
+        turnrush_core::logger::Level::Info,
+        turnrush_core::logger::V::S,
+        turnrush_core::logger::V::U,
+    );
+
+    match st.phase {
+        ShotPhase::Menu if st.timer <= 0.0 => {
+            logar_ui(&roots, &ui_nodes, &cameras, &default_ui_camera);
+            cmds
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk(menu_png.clone()));
+            logger(info, "screenshot", "captura disparada", &[("path", s(&menu_png))]);
+            st.timer = 5.0;
+            st.phase = ShotPhase::MenuSalvo;
+        }
+        ShotPhase::MenuSalvo if gravado(&menu_png) || st.timer <= 0.0 => {
+            next.set(GameState::Draft);
+            st.timer = 1.2;
+            st.phase = ShotPhase::Draft;
+        }
+        ShotPhase::Draft if st.timer <= 0.0 => {
+            cmds
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk(draft_png.clone()));
+            logger(info, "screenshot", "captura disparada", &[("path", s(&draft_png))]);
+            st.timer = 5.0;
+            st.phase = ShotPhase::DraftSalvo;
+        }
+        ShotPhase::DraftSalvo if gravado(&draft_png) || st.timer <= 0.0 => {
+            // formação fixa: exercita build_battle + battle_enter sem interação
+            run.team = vec![0, 1, 2, 3];
+            run.enemy = vec![4, 5, 6, 7];
+            build_battle(&mut run, &mut pb);
+            next.set(GameState::Battle);
+            st.timer = 1.5;
+            st.phase = ShotPhase::Batalha;
+        }
+        ShotPhase::Batalha if st.timer <= 0.0 => {
+            cmds
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk(batalha_png.clone()));
+            logger(info, "screenshot", "captura disparada", &[("path", s(&batalha_png))]);
+            st.timer = 5.0;
+            st.phase = ShotPhase::BatalhaSalvo;
+        }
+        ShotPhase::BatalhaSalvo if gravado(&batalha_png) || st.timer <= 0.0 => {
+            logger(info, "shot_exit", "modo --shot encerrando", &[("frames", u(st.frames))]);
+            turnrush_core::logger::shutdown();
+            exit.write(AppExit::Success);
+        }
+        _ => {}
+    }
 }
 
 fn new_run() -> RunRes {
@@ -408,7 +625,18 @@ fn setup_roots(mut cmds: Commands) {
         });
 
     // ── Batalha ──
-    cmds.spawn((node_full(), StateRoot(GameState::Battle), BackgroundColor(BG), Visibility::Hidden))
+    // coluna: header em cima, painéis no meio, log embaixo
+    // (Node::default() é ROW — sem isso tudo empilha lado a lado!)
+    cmds.spawn((
+        Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            ..node_full()
+        },
+        StateRoot(GameState::Battle),
+        BackgroundColor(BG),
+        Visibility::Hidden,
+    ))
         .with_children(|p| {
             p.spawn((
                 Node {
@@ -532,7 +760,12 @@ fn spawn_unit_panel(col: &mut ChildSpawnerCommands, unit: usize) {
     let side = unit / 4;
     let base = if side == 0 { AMBER } else { ROSE };
     let name = col
-        .spawn((Text::new("—"), TextFont { font_size: FontSize::Px(16.0), ..default() }, TextColor(TXT)))
+        .spawn((
+            UnitNameText,
+            Text::new("—"),
+            TextFont { font_size: FontSize::Px(16.0), ..default() },
+            TextColor(TXT),
+        ))
         .id();
     col.spawn((
         UnitPanel { unit, base_border: base, name_text: name },
@@ -751,20 +984,29 @@ fn build_battle(run: &mut RunRes, pb: &mut PlaybackRes) {
     };
 }
 
+/// Query do log de batalha — alias para satisfazer o clippy (type_complexity).
+type BattleLogTextQuery<'w, 's> = Query<
+    'w,
+    's,
+    &'static mut Text,
+    (With<BattleLogText>, Without<UnitNameText>, Without<BattleHeader>),
+>;
+
 fn battle_enter(
     run: Res<RunRes>,
     mut panels: Query<(&UnitPanel, &mut BorderColor)>,
-    mut texts: Query<&mut Text>,
+    // Queries disjuntas de Text (marcadores) — acesso sobreposto panica.
+    mut unit_names: Query<&mut Text, With<UnitNameText>>,
+    mut header: Query<&mut Text, (With<BattleHeader>, Without<UnitNameText>)>,
+    mut log: BattleLogTextQuery,
     mut bars: Query<(&UnitBarFill, &mut Node, &mut BackgroundColor)>,
-    mut header: Query<&mut Text, (With<BattleHeader>, Without<BattleLogText>)>,
-    mut log: Query<&mut Text, (With<BattleLogText>, Without<BattleHeader>)>,
 ) {
     // nomes + cor de facção por painel
     for (panel, mut border) in panels.iter_mut() {
         let (side, slot) = (panel.unit / 4, panel.unit % 4);
         let idx = if side == 0 { run.team[slot] } else { run.enemy[slot] };
         let c = &run.roster.characters[idx];
-        if let Ok(mut t) = texts.get_mut(panel.name_text) {
+        if let Ok(mut t) = unit_names.get_mut(panel.name_text) {
             *t = Text::new(format!("{} · {}", c.name, c.role.as_str()));
         }
         *border = BorderColor::all(faction_color(c.faction.as_str()));
