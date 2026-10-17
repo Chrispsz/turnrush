@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=TurnRush
+GenericName=Roguelike tático 2D
+Comment=Rodadas rápidas de auto-batalha com cadeias de combo estilo Naruto Online
+Exec=turnrush-game
+Icon=turnrush
+Terminal=false
+Categories=Game;StrategyGame;
+Keywords=game;roguelike;turnrush;strategy;
+StartupNotify=true

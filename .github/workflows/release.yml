@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   release-linux:
-    name: Release Linux (musl estático + AppImage)
+    name: Release Linux (jogo Bevy + sim musl + AppImage)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,22 +18,34 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
 
-      - name: Instalar musl-tools
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Instalar musl-tools e deps do Bevy
+        run: sudo apt-get update && sudo apt-get install -y musl-tools libwayland-dev libxkbcommon-dev
 
       - name: Garantir target musl no toolchain ativo
         run: rustup target add x86_64-unknown-linux-musl
 
-      - name: Build musl estático
+      # ── Jogo (glibc dinâmico: wgpu/winit precisam das libs do sistema) ──
+      - name: Build do jogo (Bevy, wayland + x11)
+        run: cargo build --release -p turnrush-game --features bevy/wayland
+
+      - name: Smoke test do jogo (headless, sem janela)
+        run: ./target/release/turnrush-game --check
+
+      # ── Simulador (musl estático, roda em qualquer Linux) ──
+      - name: Build musl estático do simulador
         run: cargo build --release -p turnrush-sim --target x86_64-unknown-linux-musl
 
-      - name: Testes rápidos (sanidade do binário de release)
+      - name: Testes rápidos (sanidade)
         run: cargo test --release -p turnrush-core
 
-      - name: Empacota tar.gz
+      - name: Empacota tar.gz do simulador
         run: |
           cd target/x86_64-unknown-linux-musl/release
-          tar czf ../../../turnrush-linux-x64.tar.gz turnrush-sim
+          tar czf ../../../turnrush-sim-linux-x64.tar.gz turnrush-sim
+
+      - name: Empacota tar.gz do jogo
+        run: |
+          tar czf turnrush-game-linux-x64.tar.gz -C target/release turnrush-game
 
       - name: Monta AppDir e AppImage
         run: |
@@ -41,20 +53,22 @@ jobs:
           APPDIR="turnrush.AppDir"
           mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/metainfo" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps" "$APPDIR/usr/share/icons/hicolor/128x128/apps"
 
+          # JOGO é o executável principal (glibc dinâmico)
+          cp target/release/turnrush-game "$APPDIR/usr/bin/"
+          # simulador estático como ferramenta secundária
           cp target/x86_64-unknown-linux-musl/release/turnrush-sim "$APPDIR/usr/bin/"
-          chmod +x "$APPDIR/usr/bin/turnrush-sim"
+          chmod +x "$APPDIR/usr/bin/"*
 
           cp assets/AppRun "$APPDIR/"
           chmod +x "$APPDIR/AppRun"
-          cp assets/turnrush-sim.desktop "$APPDIR/"
-          cp assets/turnrush-sim.desktop "$APPDIR/usr/share/applications/"
-          cp assets/io.github.Chrispsz.turnrush-sim.metainfo.xml "$APPDIR/usr/share/metainfo/"
+          cp assets/turnrush.desktop "$APPDIR/"
+          cp assets/turnrush.desktop "$APPDIR/usr/share/applications/"
+          cp assets/io.github.Chrispsz.turnrush.metainfo.xml "$APPDIR/usr/share/metainfo/"
           cp assets/turnrush.png "$APPDIR/turnrush.png"
           cp assets/turnrush.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/turnrush.png"
           cp assets/turnrush-128.png "$APPDIR/usr/share/icons/hicolor/128x128/apps/turnrush.png"
           cp assets/turnrush.png "$APPDIR/.DirIcon"
 
-          # LICENSE de referência dentro do AppDir (boa prática AppImage)
           cp LICENSE "$APPDIR/" 2>/dev/null || true
 
           curl -fsSL -o appimagetool \
@@ -67,16 +81,17 @@ jobs:
 
           chmod +x "TurnRush-${VERSION}-x86_64.AppImage"
 
-      - name: Smoke test do AppImage
+      - name: Smoke test do AppImage (jogo headless + sim quick)
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          APPIMAGE_EXTRACT_AND_RUN=1 "./TurnRush-${VERSION}-x86_64.AppImage" --quick --sims 2 --iters 1 --out /tmp/smoke.json
-          head -c 300 /tmp/smoke.json
+          APPIMAGE_EXTRACT_AND_RUN=1 "./TurnRush-${VERSION}-x86_64.AppImage" --check
+          APPIMAGE_EXTRACT_AND_RUN=1 "./TurnRush-${VERSION}-x86_64.AppImage" --quick --sims 2 --iters 1
 
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            turnrush-linux-x64.tar.gz
             TurnRush-*-x86_64.AppImage
+            turnrush-game-linux-x64.tar.gz
+            turnrush-sim-linux-x64.tar.gz
           generate_release_notes: true

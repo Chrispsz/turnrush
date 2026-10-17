@@ -17,6 +17,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Deps de sistema (wayland/x11 para o Bevy)
+        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev
       - name: cargo test
         run: cargo test --workspace --release
 
@@ -51,17 +53,22 @@ jobs:
           path: formation-report.json
 
   build-linux:
-    name: Build Linux x86_64
+    name: Build Linux x86_64 (engine + jogo Bevy)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Deps de sistema (wayland/x11 para o Bevy)
+        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev
       - name: cargo build --release
         run: cargo build --release --workspace
+      - name: Smoke test do jogo (headless, sem janela)
+        run: ./target/release/turnrush-game --check
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: turnrush-linux-x64
           path: |
             target/release/turnrush-sim
+            target/release/turnrush-game

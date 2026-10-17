@@ -76,6 +76,14 @@ fn main() {
     let mut formation_demo = false;
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.is_empty() {
+        // Sem argumentos NÃO roda calibração pesada (isso travava o PC de
+        // quem abria o AppImage esperando um jogo). Mostra a ajuda e sai.
+        print_help();
+        println!("\n(dica: --match para uma partida demo rápida; --quick para gate leve)");
+        return;
+    }
+    let mut threads: Option<usize> = None;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -100,6 +108,10 @@ fn main() {
             "--formation-sims" => {
                 i += 1;
                 formation_sims = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(150);
+            }
+            "--threads" => {
+                i += 1;
+                threads = args.get(i).and_then(|s| s.parse().ok());
             }
             "--probe" => {
                 // --probe IA IB IB2: varre dmg_permille de A contra B fixo
@@ -138,7 +150,10 @@ fn main() {
         "turnrush-sim iniciado",
     );
 
-    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
+    // Padrão educado: no máximo 4 threads (o padrão antigo usava TODOS os
+    // núcleos e saturava a máquina do usuário). --threads N sobrescreve.
+    let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
+    let threads = threads.unwrap_or_else(|| cpus.min(4)).clamp(1, cpus.max(1));
 
     if formation4 {
         println!("TURNRUSH · simulador do modo Formação 4v4");

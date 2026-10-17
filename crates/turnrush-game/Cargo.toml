@@ -1,0 +1,20 @@
+[package]
+name = "turnrush-game"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "TurnRush 2D — cliente visual jogável (Bevy): menu, draft, batalha 4v4 com playback e recompensas"
+
+[dependencies]
+turnrush-core = { path = "../turnrush-core" }
+bevy = { version = "0.20", default-features = false, features = [
+  "bevy_winit",
+  "bevy_render",
+  "bevy_core_pipeline",
+  "bevy_ui",
+  "bevy_text",
+  "bevy_state",
+  "default_font",
+  "multi_threaded",
+  "x11",
+] }

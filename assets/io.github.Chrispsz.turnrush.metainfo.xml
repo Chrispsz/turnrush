@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.Chrispsz.turnrush</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>TurnRush</name>
+  <summary>Roguelike tático 2D: auto-batalhas rápidas com cadeias de combo estilo Naruto Online</summary>
+  <description>
+    <p>TurnRush é um roguelike acelerado: monte sua formação de 4 personagens,
+    assista batalhas 4v4 com cadeias de perseguição (chase), escolha
+    aprimoramentos entre rodadas e encare inimigos cada vez mais fortes.
+    Engine determinística em Rust puro (zero dependências) com cliente visual
+    Bevy. Logs de sessão completos em ~/TurnRush/logs.</p>
+  </description>
+  <developer>
+    <name>Chrispsz</name>
+  </developer>
+  <url type="homepage">https://github.com/Chrispsz/turnrush</url>
+  <url type="bugtracker">https://github.com/Chrispsz/turnrush/issues</url>
+  <provides>
+    <binary>turnrush-game</binary>
+  </provides>
+  <releases>
+    <release version="0.4.0" date="2026-10-17">
+      <description>
+        <p>PRIMEIRA VERSÃO JOGÁVEL: cliente visual 2D (Bevy 0.20) com menu,
+        draft de formação, batalhas 4v4 com playback visual (barras de HP,
+        flashes, log de combate), recompensas e escalada de dificuldade.
+        O simulador de balanceamento continua incluído como ferramenta
+        secundária (turnrush-sim).</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

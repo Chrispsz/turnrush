@@ -21,7 +21,10 @@
 
 use crate::data::{ComboState, Roster, TargetSpec};
 use crate::rng::Rng;
-use crate::types::{Outcome, PER_MILLE};
+use crate::types::PER_MILLE;
+
+/// Resultado da batalha (re-exportado para o cliente de jogo).
+pub use crate::types::Outcome;
 
 /// Tamanho da formação (4v4).
 pub const FORMATION_SIZE: usize = 4;

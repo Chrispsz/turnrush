@@ -8,26 +8,11 @@ Balanceamento absoluto (DWC v2 + LCE) · Linux first · CI no GitHub Actions.
 ## Quick start
 
 ```bash
-cargo test --workspace --release                          # 42 testes
+cargo test --workspace --release                          # 21 testes
 cargo run --release -p turnrush-sim -- --match            # demonstra uma partida
 cargo run --release -p turnrush-sim -- --quick --gate     # gate de equilíbrio (CI)
 cargo run --release -p turnrush-sim --                    # calibração completa
 ```
-
-### Download (AppImage)
-
-Baixe a versão mais recente em
-[Releases](https://github.com/Chrispsz/turnrush/releases) e execute:
-
-```bash
-chmod +x TurnRush-*-x86_64.AppImage
-./TurnRush-*-x86_64.AppImage --match          # partida de demonstração
-./TurnRush-*-x86_64.AppImage --quick --gate   # gate de equilíbrio
-```
-
-- Binário estático (musl): roda em qualquer Linux x86_64 sem dependências.
-- Logs de sessão em `~/TurnRush/logs` (JSONL + crash reports com backtrace).
-- Há também `turnrush-linux-x64.tar.gz` com o binário puro, se preferir.
 
 ## Crates
 
