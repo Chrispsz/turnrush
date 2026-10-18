@@ -1778,10 +1778,12 @@ impl InteractiveBattle {
         let Some(&(enemy, tslot, st)) = self.chase_queue.first() else {
             return Err(ActionError::WrongPhase);
         };
-        if self.chain_links >= CHAIN_CAP as u64 {
-            // Prova contra loops: teto absoluto de elos na batalha.
+        if self.chase_queue.len() > CHAIN_CAP {
+            // Prova contra loops: teto de estados pendentes por janela.
             self.chase_queue.clear();
-            return Err(ActionError::WrongPhase);
+            self.cursor += 1;
+            self.outbox.push(BattleEvent::ChaseRejected { side });
+            return Ok(());
         }
         let elegivel = self
             .chase_eligible()

@@ -13,6 +13,7 @@
 
 mod app;
 mod battle_log;
+mod controller;
 mod scene;
 mod sprites;
 
@@ -61,6 +62,50 @@ fn checar_headless() {
     assert!(evs.len() > 10, "playback deve ter eventos suficientes");
     assert_eq!(rodadas, f.rounds(), "parser deve reconhecer todas as rodadas");
     assert!(ataques > 0, "deve haver ataques no log");
+
+    // v0.7: batalha interativa via controlador (eventos finos, IA simétrica)
+    let mut ctl = controller::BattleController::new(
+        &roster,
+        [0, 1, 2, 3],
+        [4, 5, 6, 7],
+        11,
+        turnrush_core::interactive::SideEdge::default(),
+        turnrush_core::interactive::SideEdge::default(),
+        true,
+    );
+    let mut passos = 0u64;
+    let mut eventos_finos = 0u64;
+    loop {
+        passos += 1;
+        assert!(passos < 100_000, "controlador não converge no --check");
+        match ctl.pump() {
+            controller::CtlPhase::PlayingEvents => {
+                assert!(ctl.next_event().is_some(), "PlayingEvents sem evento");
+                ctl.advance_event();
+                eventos_finos += 1;
+            }
+            controller::CtlPhase::AwaitingPlayer { chase } => {
+                let p = ctl.prompt().expect("prompt na vez");
+                let acao = if chase {
+                    match ctl.bt.chase_eligible_slots(p.side).first() {
+                        Some(&s) => turnrush_core::interactive::ChosenAction::Chase { chaser_slot: s },
+                        None => turnrush_core::interactive::ChosenAction::RejectChase,
+                    }
+                } else {
+                    controller::greedy_decide(&ctl.bt, &p)
+                };
+                let _ = ctl.submit(acao);
+            }
+            controller::CtlPhase::Done(_) => break,
+        }
+    }
+    println!(
+        "batalha interativa: {:?} · {} eventos finos · {} rodadas · {} cadeias",
+        ctl.outcome(),
+        eventos_finos,
+        ctl.bt.round(),
+        ctl.bt.chain_links()
+    );
     turnrush_core::logger::shutdown();
     println!("--check OK");
 }
