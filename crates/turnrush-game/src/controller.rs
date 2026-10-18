@@ -206,9 +206,8 @@ impl BattleController {
 /// IA greedy simétrica: decide com a MESMA informação do jogador
 /// (legal_actions + preview_action), zero leitura de estado interno.
 ///
-/// Prioridade: chase elegível > interrupt de janela > cura com aliado ferido
-/// > mystery > skill de dano > padrão. Empates resolvidos pelo maior número
-/// previsto.
+/// Prioridade: chase elegível, depois interrupt de janela, cura com aliado
+/// ferido, mystery, skill de dano e padrão. Empates: maior número previsto.
 pub fn greedy_decide(bt: &InteractiveBattle, p: &TurnPrompt) -> ChosenAction {
     use std::cmp::Ordering;
     if p.phase == PromptPhase::ConfirmChase {
@@ -389,7 +388,7 @@ mod tests {
                     if chase {
                         let elegiveis = ctl.bt.chase_eligible_slots(p.side);
                         assert!(!elegiveis.is_empty(), "janela de chase sem elegíveis não deve pausar");
-                        ctl.submit(ChosenAction::Chase { chaser_slot: elegiveis[0] });
+                        let _ = ctl.submit(ChosenAction::Chase { chaser_slot: elegiveis[0] });
                     } else {
                         assert!(
                             legais.iter().any(|l| l.kind == ActionKind::Standard),
