@@ -191,6 +191,27 @@ pub enum ActionError {
     BattleOver,
 }
 
+/// Pré-visualização EXATA de uma ação (o cliente mostra isto antes de
+/// confirmar). Números vêm dos MESMOS helpers da execução — o que a prévia
+/// promete é o que acontece. Random2 lista candidatos com nota honesta.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActionPreview {
+    /// Dano total estimado (soma sobre os alvos efetivos).
+    pub damage: i32,
+    /// Cura total estimada.
+    pub heal: i32,
+    /// Escudo total estimado.
+    pub shield: i32,
+    /// Estados que a ação vai aplicar: (lado_alvo, slot, estado).
+    pub states: Vec<(usize, usize, ComboState)>,
+    /// Delta de fluxo do executor (negativo = gasta; +15 no padrão).
+    pub fluxo_delta: i32,
+    /// Alvos efetivos resolvidos: (lado, slot).
+    pub targets: Vec<(usize, usize)>,
+    /// Notas honestas (ex.: "alvos aleatórios: 2 sorteados entre N vivos").
+    pub notes: Vec<String>,
+}
+
 /// Motivo de ação pulada (transparência total para o cliente).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SkipReason {
@@ -827,6 +848,175 @@ impl InteractiveBattle {
 
     // ── Execução ─────────────────────────────────────────────────────────────
 
+    /// Pré-visualização exata da ação dada (não consome RNG, não muta
+    /// estado). Os números usam os MESMOS helpers da execução — e os erros
+    /// são os mesmos que `execute_action` devolveria.
+    pub fn preview_action(
+        &self,
+        side: usize,
+        slot: usize,
+        action: ChosenAction,
+    ) -> Result<ActionPreview, ActionError> {
+        if self.over {
+            return Err(ActionError::BattleOver);
+        }
+        let ChosenAction::Act { kind, target } = action else {
+            // Fases de chase: prévia do elo de perseguição (recusa = zero tudo).
+            if self.chase_queue.is_empty() {
+                return Err(ActionError::WrongPhase);
+            }
+            let ChosenAction::Chase { chaser_slot } = action else {
+                return Ok(ActionPreview {
+                    damage: 0,
+                    heal: 0,
+                    shield: 0,
+                    states: Vec::new(),
+                    fluxo_delta: 0,
+                    targets: Vec::new(),
+                    notes: vec!["recusa: nenhum elo executado".to_string()],
+                });
+            };
+            let Some(&(enemy, tslot, st)) = self.chase_queue.first() else {
+                return Err(ActionError::WrongPhase);
+            };
+            let elegivel = self
+                .chase_eligible()
+                .into_iter()
+                .any(|s| s == chaser_slot && self.sides[self.chase_side].units[chaser_slot].chase.trigger == st);
+            if !elegivel {
+                return Err(ActionError::BadTarget);
+            }
+            let states = {
+                let ap = self.sides[self.chase_side].units[chaser_slot].chase.applies_state;
+                if ap != ComboState::None && self.sides[enemy].units[tslot].alive {
+                    vec![(enemy, tslot, ap)]
+                } else {
+                    Vec::new()
+                }
+            };
+            return Ok(ActionPreview {
+                damage: self.chase_damage(self.chase_side, chaser_slot, enemy, tslot),
+                heal: 0,
+                shield: 0,
+                states,
+                fluxo_delta: 0,
+                targets: vec![(enemy, tslot)],
+                notes: Vec::new(),
+            });
+        };
+        if !self.chase_queue.is_empty() {
+            return Err(ActionError::WrongPhase);
+        }
+        let u = &self.sides[side].units[slot];
+        let mut notes: Vec<String> = Vec::new();
+        match kind {
+            ActionKind::Standard => {
+                let Some(tslot) = self.standard_target(side, target) else {
+                    return Err(ActionError::BadTarget);
+                };
+                if let Some(t) = target {
+                    if t != tslot {
+                        notes.push("alvo escolhido morto: caiu no auto-alvo (primeiro vivo)".to_string());
+                    }
+                }
+                let states = {
+                    let ap = u.standard.applies_state;
+                    if ap != ComboState::None {
+                        vec![(1 - side, tslot, ap)]
+                    } else {
+                        Vec::new()
+                    }
+                };
+                Ok(ActionPreview {
+                    damage: self.standard_damage(side, slot, tslot),
+                    heal: 0,
+                    shield: 0,
+                    states,
+                    fluxo_delta: FLUXO_STD_GAIN,
+                    targets: vec![(1 - side, tslot)],
+                    notes,
+                })
+            }
+            ActionKind::Skill | ActionKind::Mystery => {
+                let (tier, custo, cd) = if kind == ActionKind::Skill {
+                    (&u.skill, SKILL_COST, u.skill_cd)
+                } else {
+                    (&u.mystery, MYSTERY_COST, u.mystery_cd)
+                };
+                if u.silence_turns > 0 {
+                    return Err(ActionError::LockedOut);
+                }
+                if cd > 0 {
+                    return Err(ActionError::OnCooldown);
+                }
+                if kind == ActionKind::Mystery && self.round < u.mystery_unlock_round {
+                    return Err(ActionError::IllegalAction);
+                }
+                if u.fluxo < custo {
+                    return Err(ActionError::NotEnoughFluxo);
+                }
+                if tier.targets == TargetSpec::AllySingle || tier.targets == TargetSpec::SelfTarget {
+                    let tslot = self.tier_ally_slot(side, tier, target, slot);
+                    let (_, shield) = self.tier_support_value(side, slot, tier);
+                    let falta = (self.sides[side].units[tslot].hp_max - self.sides[side].units[tslot].hp).max(0);
+                    let heal_real = self.sides[side].units[slot].atk_eff() * tier.heal_pct / 100;
+                    let heal_real = heal_real.min(falta);
+                    Ok(ActionPreview {
+                        damage: 0,
+                        heal: heal_real,
+                        shield,
+                        states: Vec::new(),
+                        fluxo_delta: -custo,
+                        targets: vec![(side, tslot)],
+                        notes,
+                    })
+                } else {
+                    let slots = self.tier_enemy_slots(side, tier);
+                    if tier.targets == TargetSpec::Random2 {
+                        notes.push(format!(
+                            "alvos aleatórios: 2 sorteados entre {} vivos (prévia lista candidatos)",
+                            slots.len()
+                        ));
+                    }
+                    let damage: i32 = slots.iter().map(|&ts| self.tier_damage(side, slot, tier, ts)).sum();
+                    let states: Vec<(usize, usize, ComboState)> = slots
+                        .iter()
+                        .filter(|&_ts| tier.applies != ComboState::None)
+                        .map(|&ts| (1 - side, ts, tier.applies))
+                        .collect();
+                    let targets: Vec<(usize, usize)> = slots.iter().map(|&ts| (1 - side, ts)).collect();
+                    Ok(ActionPreview { damage, heal: 0, shield: 0, states, fluxo_delta: -custo, targets, notes })
+                }
+            }
+            ActionKind::Interrupt => {
+                let Some(def) = u.interrupt else {
+                    return Err(ActionError::IllegalAction);
+                };
+                if u.interrupt_cd > 0 {
+                    return Err(ActionError::OnCooldown);
+                }
+                if u.fluxo < INTERRUPT_COST {
+                    return Err(ActionError::NotEnoughFluxo);
+                }
+                let t = target.ok_or(ActionError::BadTarget)?;
+                let enemy = 1 - side;
+                if t >= 4 || !self.sides[enemy].units[t].alive || self.sides[enemy].acted[t] {
+                    return Err(ActionError::BadTarget);
+                }
+                let _ = def;
+                Ok(ActionPreview {
+                    damage: 0,
+                    heal: 0,
+                    shield: 0,
+                    states: Vec::new(),
+                    fluxo_delta: -INTERRUPT_COST,
+                    targets: vec![(enemy, t)],
+                    notes,
+                })
+            }
+        }
+    }
+
     /// Executa UMA decisão atômica e devolve os eventos gerados.
     pub fn execute_action(&mut self, action: ChosenAction) -> Result<Vec<BattleEvent>, ActionError> {
         if self.over {
@@ -1126,8 +1316,118 @@ impl InteractiveBattle {
 
     // ── Ações ────────────────────────────────────────────────────────────────
 
+    // ── Cálculos puros (compartilhados por execução e pré-visualização) ─────
+
+    /// Slot inimigo resolvido do ataque padrão (`None` = sem vivos).
+    fn standard_target(&self, side: usize, target: Option<usize>) -> Option<usize> {
+        let enemy = 1 - side;
+        let targets = self.sides[enemy].living_slots();
+        match target {
+            Some(t) if t < 4 && self.sides[enemy].units[t].alive => Some(t),
+            _ => targets.first().copied(),
+        }
+    }
+
+    /// Dano final do padrão no alvo (com bônus e mitigações), sem mutação.
+    fn standard_damage(&self, side: usize, slot: usize, tslot: usize) -> i32 {
+        let u = &self.sides[side].units[slot];
+        let (tdef, t_red, t_dot) = {
+            let t = &self.sides[1 - side].units[tslot];
+            (t.def, t.dmg_reduction_permille, t.dot_turns > 0)
+        };
+        let mut dmg = pace(crate::combat::damage_after_def(u.atk_eff(), u.standard.damage_pct, tdef));
+        if t_dot && u.bonus_vs_dot > 0 {
+            dmg = dmg * (PER_MILLE + u.bonus_vs_dot) / PER_MILLE;
+        }
+        if u.standard.applies_state != ComboState::None {
+            if let Some((_, p)) = u.team_bonus_vs.iter().find(|(st, _)| *st == u.standard.applies_state) {
+                dmg = dmg * (PER_MILLE + p) / PER_MILLE;
+            }
+        }
+        if t_red > 0 {
+            dmg = dmg * (PER_MILLE - t_red) / PER_MILLE;
+        }
+        dmg
+    }
+
+    /// Slots inimigos efetivos de um tier (determinístico exceto Random2).
+    fn tier_enemy_slots(&self, side: usize, tier: &Tier) -> Vec<usize> {
+        let enemy = 1 - side;
+        let mut slots: Vec<usize> = match tier.targets {
+            TargetSpec::EnemiesFront => {
+                let living = self.sides[enemy].living_slots();
+                let front: Vec<usize> = living.iter().copied().take(2).collect();
+                if front.is_empty() { living } else { front }
+            }
+            TargetSpec::EnemiesAll => self.sides[enemy].living_slots(),
+            // Random2 é resolvido na execução (RNG); prévia lista candidatos
+            TargetSpec::Random2 => self.sides[enemy].living_slots(),
+            _ => Vec::new(),
+        };
+        slots.retain(|&s| self.sides[enemy].units[s].alive);
+        slots
+    }
+
+    /// Slot aliado efetivo de um tier (auto = o mais ferido).
+    fn tier_ally_slot(&self, side: usize, tier: &Tier, target: Option<usize>, slot: usize) -> usize {
+        if tier.targets == TargetSpec::SelfTarget {
+            slot
+        } else {
+            match target {
+                Some(t) if t < 4 && self.sides[side].units[t].alive => t,
+                _ => self.most_wounded_ally(side),
+            }
+        }
+    }
+
+    /// Dano final do tier em um alvo (com perfuração/aura/mitigação).
+    fn tier_damage(&self, side: usize, slot: usize, tier: &Tier, tslot: usize) -> i32 {
+        let (tdef, t_red) = {
+            let t = &self.sides[1 - side].units[tslot];
+            (t.def, t.dmg_reduction_permille)
+        };
+        let eff_def = tdef * (100 - tier.pierce_def_pct) / 100;
+        let mut dmg = pace(crate::combat::damage_after_def(
+            self.sides[side].units[slot].atk_eff(),
+            tier.dmg_pct,
+            eff_def,
+        ));
+        if tier.applies != ComboState::None {
+            if let Some((_, p)) = self.sides[side].units[slot]
+                .team_bonus_vs
+                .iter()
+                .find(|(st, _)| *st == tier.applies)
+            {
+                dmg = dmg * (PER_MILLE + p) / PER_MILLE;
+            }
+        }
+        if t_red > 0 {
+            dmg = dmg * (PER_MILLE - t_red) / PER_MILLE;
+        }
+        dmg
+    }
+
+    /// Cura/escudo do tier em aliado (valor bruto; cap de HP é da execução).
+    fn tier_support_value(&self, side: usize, slot: usize, tier: &Tier) -> (i32, i32) {
+        let atk = self.sides[side].units[slot].atk_eff();
+        (atk * tier.heal_pct / 100, atk * tier.shield_pct / 100)
+    }
+
+    /// Dano do elo de perseguição (com bônus da 1ª perseguição do time).
+    fn chase_damage(&self, side: usize, chaser_slot: usize, enemy: usize, tslot: usize) -> i32 {
+        let c = &self.sides[side].units[chaser_slot];
+        let tdef = self.sides[enemy].units[tslot].def;
+        let primeiro_elo = !self.sides[side].first_chase_used;
+        let bonus = if primeiro_elo { c.chase_dmg_bonus_permille } else { 0 };
+        let mut dmg = pace(crate::combat::damage_after_def(c.atk_eff(), c.chase.damage_pct, tdef));
+        if bonus > 0 {
+            dmg = dmg * (PER_MILLE + bonus) / PER_MILLE;
+        }
+        dmg
+    }
+
     fn do_standard(&mut self, side: usize, slot: usize, target: Option<usize>) {
-        let (sname, dmg_pct, applies) = {
+        let (sname, _dmg_pct, applies) = {
             let u = &self.sides[side].units[slot];
             (u.standard.name.clone(), u.standard.damage_pct, u.standard.applies_state)
         };
@@ -1138,38 +1438,14 @@ impl InteractiveBattle {
             name: sname,
             target: target.map(|t| (1 - side, t)),
         });
-        let enemy = 1 - side;
-        let targets = self.sides[enemy].living_slots();
-        if targets.is_empty() {
+        let Some(tslot) = self.standard_target(side, target) else {
             return;
-        }
-        let tslot = match target {
-            Some(t) if t < 4 && self.sides[enemy].units[t].alive => t,
-            _ => targets[0],
         };
+        let dmg = self.standard_damage(side, slot, tslot);
         let atk = self.sides[side].units[slot].atk_eff();
         let dot_on_hit = self.sides[side].units[slot].dot_on_hit;
-        let bonus_vs_dot = self.sides[side].units[slot].bonus_vs_dot;
-        let (tdef, t_red, t_dot) = {
-            let t = &self.sides[enemy].units[tslot];
-            (t.def, t.dmg_reduction_permille, t.dot_turns > 0)
-        };
-        let mut dmg = pace(crate::combat::damage_after_def(atk, dmg_pct, tdef));
-        if t_dot && bonus_vs_dot > 0 {
-            dmg = dmg * (PER_MILLE + bonus_vs_dot) / PER_MILLE;
-        }
-        if !self.sides[side].units[slot].team_bonus_vs.is_empty() && applies != ComboState::None {
-            if let Some((_, p)) =
-                self.sides[side].units[slot].team_bonus_vs.iter().find(|(st, _)| *st == applies)
-            {
-                dmg = dmg * (PER_MILLE + p) / PER_MILLE;
-            }
-        }
-        if t_red > 0 {
-            dmg = dmg * (PER_MILLE - t_red) / PER_MILLE;
-        }
         if dot_on_hit {
-            let t = &mut self.sides[enemy].units[tslot];
+            let t = &mut self.sides[1 - side].units[tslot];
             if t.alive {
                 let novo = atk * DOT_ATK_PCT / 100;
                 if t.dot_turns == 0 || novo >= t.dot_dmg {
@@ -1178,12 +1454,13 @@ impl InteractiveBattle {
                 t.dot_turns = DOT_TURNS;
             }
         }
-        self.deal_damage(enemy, tslot, dmg, 0);
-        if applies != ComboState::None && self.sides[enemy].units[tslot].alive {
-            self.chase_queue.push((enemy, tslot, applies));
+        self.deal_damage(1 - side, tslot, dmg, 0);
+        if applies != ComboState::None && self.sides[1 - side].units[tslot].alive {
+            self.chase_queue.push((1 - side, tslot, applies));
+            self.outbox.push(BattleEvent::StateApplied { side: 1 - side, slot: tslot, state: applies });
         }
         // Reflexo do alvo (só em ataque padrão)
-        let refl = self.sides[enemy].units[tslot].reflect_permille;
+        let refl = self.sides[1 - side].units[tslot].reflect_permille;
         if refl > 0 && self.sides[side].units[slot].alive {
             let back = dmg * refl / PER_MILLE;
             self.deal_damage(side, slot, back, 0);
@@ -1217,7 +1494,6 @@ impl InteractiveBattle {
         } else {
             self.sides[side].units[slot].mystery_cd = cd.max(1);
         }
-        let atk = self.sides[side].units[slot].atk_eff();
         let mut queue: Vec<(usize, usize, ComboState)> = Vec::new();
 
         if tier.team_fluxo > 0 {
@@ -1230,21 +1506,13 @@ impl InteractiveBattle {
 
         match tier.targets {
             TargetSpec::AllySingle | TargetSpec::SelfTarget => {
-                let tslot = if tier.targets == TargetSpec::SelfTarget {
-                    slot
-                } else {
-                    match target {
-                        Some(t) if t < 4 && self.sides[side].units[t].alive => t,
-                        _ => self.most_wounded_ally(side),
-                    }
-                };
-                let heal = atk * tier.heal_pct / 100;
+                let tslot = self.tier_ally_slot(side, tier, target, slot);
+                let (heal, shield) = self.tier_support_value(side, slot, tier);
                 if heal > 0 {
                     let t = &mut self.sides[side].units[tslot];
                     t.hp = (t.hp + heal).min(t.hp_max);
                     self.outbox.push(BattleEvent::Heal { side, slot: tslot, amount: heal });
                 }
-                let shield = atk * tier.shield_pct / 100;
                 if shield > 0 {
                     self.sides[side].units[tslot].shield += shield;
                     self.outbox.push(BattleEvent::Shield { side, slot: tslot, amount: shield });
@@ -1255,59 +1523,28 @@ impl InteractiveBattle {
             }
             TargetSpec::EnemiesFront | TargetSpec::EnemiesAll | TargetSpec::Random2 => {
                 let enemy = 1 - side;
-                let mut slots: Vec<usize> = match tier.targets {
-                    TargetSpec::EnemiesFront => {
-                        let living = self.sides[enemy].living_slots();
-                        let front: Vec<usize> = living.iter().copied().take(2).collect();
-                        if front.is_empty() {
-                            living
-                        } else {
-                            front
-                        }
-                    }
-                    TargetSpec::EnemiesAll => self.sides[enemy].living_slots(),
-                    TargetSpec::Random2 => {
-                        let mut living = self.sides[enemy].living_slots();
-                        let n = living.len().min(2);
-                        self.rng.shuffle(&mut living);
-                        living.truncate(n);
-                        living
-                    }
-                    _ => Vec::new(),
-                };
-                slots.retain(|&s| self.sides[enemy].units[s].alive);
+                let mut slots = self.tier_enemy_slots(side, tier);
+                if tier.targets == TargetSpec::Random2 {
+                    let n = slots.len().min(2);
+                    self.rng.shuffle(&mut slots);
+                    slots.truncate(n);
+                }
+                let dot_novo = self.sides[side].units[slot].atk_eff() * DOT_ATK_PCT / 100;
                 for tslot in slots {
-                    let (tdef, t_red) = {
-                        let t = &self.sides[enemy].units[tslot];
-                        (t.def, t.dmg_reduction_permille)
-                    };
-                    let eff_def = tdef * (100 - tier.pierce_def_pct) / 100;
-                    let mut dmg = pace(crate::combat::damage_after_def(atk, tier.dmg_pct, eff_def));
-                    if tier.applies != ComboState::None {
-                        if let Some((_, p)) = self.sides[side].units[slot]
-                            .team_bonus_vs
-                            .iter()
-                            .find(|(st, _)| *st == tier.applies)
-                        {
-                            dmg = dmg * (PER_MILLE + p) / PER_MILLE;
-                        }
-                    }
-                    if t_red > 0 {
-                        dmg = dmg * (PER_MILLE - t_red) / PER_MILLE;
-                    }
+                    let dmg = self.tier_damage(side, slot, tier, tslot);
                     self.deal_damage(enemy, tslot, dmg, tier.pierce_shield_pct);
                     if self.sides[enemy].units[tslot].alive {
                         let t = &mut self.sides[enemy].units[tslot];
                         if tier.dot {
-                            let novo = atk * DOT_ATK_PCT / 100;
-                            if t.dot_turns == 0 || novo >= t.dot_dmg {
-                                t.dot_dmg = novo;
+                            if t.dot_turns == 0 || dot_novo >= t.dot_dmg {
+                                t.dot_dmg = dot_novo;
                             }
                             t.dot_turns = DOT_TURNS;
                         }
                     }
                     if tier.applies != ComboState::None && self.sides[enemy].units[tslot].alive {
                         queue.push((enemy, tslot, tier.applies));
+                        self.outbox.push(BattleEvent::StateApplied { side: enemy, slot: tslot, state: tier.applies });
                     }
                 }
             }
@@ -1436,19 +1673,11 @@ impl InteractiveBattle {
         if !elegivel {
             return Err(ActionError::BadTarget);
         }
-        let c = &self.sides[side].units[chaser_slot];
-        let (_cname, cdmg_pct, capplies) =
-            (c.chase.name.clone(), c.chase.damage_pct, c.chase.applies_state);
+        let capplies = self.sides[side].units[chaser_slot].chase.applies_state;
         let primeiro_elo = !self.sides[side].first_chase_used;
-        let bonus = if primeiro_elo { self.sides[side].units[chaser_slot].chase_dmg_bonus_permille } else { 0 };
         self.sides[side].units[chaser_slot].chased = true;
         self.sides[side].first_chase_used = true;
-        let atk = self.sides[side].units[chaser_slot].atk_eff();
-        let tdef = self.sides[enemy].units[tslot].def;
-        let mut dmg = pace(crate::combat::damage_after_def(atk, cdmg_pct, tdef));
-        if bonus > 0 {
-            dmg = dmg * (PER_MILLE + bonus) / PER_MILLE;
-        }
+        let dmg = self.chase_damage(side, chaser_slot, enemy, tslot);
         self.deal_damage(enemy, tslot, dmg, 0);
         self.chain_links += 1;
         let killed = !self.sides[enemy].units[tslot].alive;
@@ -2018,6 +2247,189 @@ mod tests {
             !bt.unmodeled().is_empty(),
             "passiva condicional não modelada deve aparecer na lista honesta"
         );
+    }
+
+    // ── E.2: preview == resultado ────────────────────────────────────────────
+
+    #[test]
+    fn preview_padrao_igual_resultado() {
+        let r = test_roster();
+        let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 0);
+        forcar_vez(&mut bt, 0, 0);
+        let prev = bt
+            .preview_action(0, 0, ChosenAction::Act { kind: ActionKind::Standard, target: Some(0) })
+            .expect("preview legal");
+        assert_eq!(prev.targets, vec![(1, 0)]);
+        assert_eq!(prev.fluxo_delta, FLUXO_STD_GAIN, "padrão gera fluxo");
+        let evs = bt
+            .execute_action(ChosenAction::Act { kind: ActionKind::Standard, target: Some(0) })
+            .expect("executa");
+        let dano: i32 = evs
+            .iter()
+            .filter_map(|e| match e {
+                BattleEvent::Damage { side: 1, slot: 0, amount, .. } => Some(*amount),
+                _ => None,
+            })
+            .sum();
+        assert_eq!(prev.damage, dano, "prévia do padrão == dano executado");
+    }
+
+    #[test]
+    fn preview_skill_igual_resultado() {
+        let r = test_roster();
+        let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 0);
+        bt.sides[0].units[0].fluxo = 100;
+        forcar_vez(&mut bt, 0, 0);
+        let prev = bt
+            .preview_action(0, 0, ChosenAction::Act { kind: ActionKind::Skill, target: None })
+            .expect("preview skill");
+        assert_eq!(prev.fluxo_delta, -SKILL_COST);
+        let evs = bt
+            .execute_action(ChosenAction::Act { kind: ActionKind::Skill, target: None })
+            .expect("executa skill");
+        let dano: i32 = evs
+            .iter()
+            .filter_map(|e| match e {
+                BattleEvent::Damage { side: 1, amount, .. } => Some(*amount),
+                _ => None,
+            })
+            .sum();
+        assert_eq!(prev.damage, dano, "prévia da skill == dano executado (frente)");
+        assert!(prev.targets.contains(&(1, 0)), "alvo da frente na prévia");
+    }
+
+    #[test]
+    fn preview_mystery_estados_igual_resultado() {
+        let r = test_roster();
+        let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 0);
+        bt.sides[0].units[0].fluxo = 100;
+        bt.round = 3;
+        forcar_vez(&mut bt, 0, 0);
+        let prev = bt
+            .preview_action(0, 0, ChosenAction::Act { kind: ActionKind::Mystery, target: None })
+            .expect("preview mystery");
+        assert!(!prev.states.is_empty(), "mystery do striker aplica launch");
+        assert!(prev.states.iter().all(|(s, _, st)| *s == 1 && *st == ComboState::Launch));
+        let evs = bt
+            .execute_action(ChosenAction::Act { kind: ActionKind::Mystery, target: None })
+            .expect("executa mystery");
+        let dano: i32 = evs
+            .iter()
+            .filter_map(|e| match e {
+                BattleEvent::Damage { side: 1, amount, .. } => Some(*amount),
+                _ => None,
+            })
+            .sum();
+        assert_eq!(prev.damage, dano, "prévia da mystery == dano executado");
+        let aplicados: Vec<(usize, usize, ComboState)> = evs
+            .iter()
+            .filter_map(|e| match e {
+                BattleEvent::StateApplied { side, slot, state } => Some((*side, *slot, *state)),
+                _ => None,
+            })
+            .collect();
+        // exclui estados abertos por chase (só os da ação direta contam)
+        assert_eq!(prev.states, aplicados, "estados previstos == aplicados");
+    }
+
+    #[test]
+    fn preview_cura_escudo_igual_resultado() {
+        let r = test_roster();
+        let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 0);
+        // machuca o slot 0 do lado 0 para a cura ter efeito parcial
+        bt.sides[0].units[0].hp -= 250;
+        bt.sides[0].units[3].fluxo = 100;
+        forcar_vez(&mut bt, 0, 3);
+        let prev = bt
+            .preview_action(0, 3, ChosenAction::Act { kind: ActionKind::Skill, target: Some(0) })
+            .expect("preview cura");
+        assert!(prev.heal > 0 && prev.damage == 0);
+        let evs = bt
+            .execute_action(ChosenAction::Act { kind: ActionKind::Skill, target: Some(0) })
+            .expect("executa cura");
+        let curas: i32 = evs
+            .iter()
+            .filter_map(|e| match e {
+                BattleEvent::Heal { side: 0, slot: 0, amount } => Some(*amount),
+                _ => None,
+            })
+            .sum();
+        assert_eq!(prev.heal, curas, "prévia da cura == cura executada (cap de HP incluso)");
+    }
+
+    #[test]
+    fn preview_chase_igual_resultado() {
+        let r = test_roster();
+        let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 0);
+        bt.sides[0].units[0].fluxo = 100;
+        bt.round = 3;
+        forcar_vez(&mut bt, 0, 0);
+        let _ = bt.execute_action(ChosenAction::Act { kind: ActionKind::Mystery, target: None }).expect("mystery");
+        let p = bt.prompt();
+        let _ = bt.drain();
+        assert_eq!(p.phase, PromptPhase::ConfirmChase);
+        let prev = bt
+            .preview_action(0, 1, ChosenAction::Chase { chaser_slot: 1 })
+            .expect("preview chase");
+        assert!(prev.damage > 0);
+        let evs = bt.execute_action(ChosenAction::Chase { chaser_slot: 1 }).expect("executa chase");
+        let dano: i32 = evs
+            .iter()
+            .filter_map(|e| match e {
+                BattleEvent::ChaseResolved { amount, .. } => Some(*amount),
+                _ => None,
+            })
+            .sum();
+        assert_eq!(prev.damage, dano, "prévia do chase == dano do elo");
+    }
+
+    #[test]
+    fn preview_recusa_e_erros_espelham_execucao() {
+        let r = test_roster();
+        let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 0);
+        let _ = bt.prompt();
+        let _ = bt.drain();
+        // fora de janela de chase: prévia espelha o erro da execução
+        let pv = bt.preview_action(0, 0, ChosenAction::RejectChase);
+        let ex = bt.execute_action(ChosenAction::RejectChase);
+        assert_eq!(pv.err(), ex.err(), "prévia e execução concordam no erro");
+        // mystery sem fluxo: erro idêntico
+        let pv = bt.preview_action(0, 0, ChosenAction::Act { kind: ActionKind::Mystery, target: None });
+        let ex = bt.execute_action(ChosenAction::Act { kind: ActionKind::Mystery, target: None });
+        assert_eq!(pv.err(), ex.err());
+        // padrão em alvo morto → mesmo erro
+        bt.sides[1].units[0].alive = false;
+        let pv = bt.preview_action(0, 0, ChosenAction::Act { kind: ActionKind::Standard, target: Some(0) });
+        assert!(pv.is_ok(), "alvo morto cai no auto-alvo com nota");
+        assert!(pv.expect("ok").notes.iter().any(|n| n.contains("auto-alvo")));
+    }
+
+    #[test]
+    fn preview_nao_consome_rng_nem_muta_estado() {
+        let r = test_roster();
+        let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 0);
+        bt.sides[0].units[0].fluxo = 100;
+        forcar_vez(&mut bt, 0, 0);
+        let mut hp_antes: Vec<i32> = Vec::new();
+        for s in 0..2 {
+            for k in 0..4 {
+                hp_antes.push(bt.unit(s, k).hp);
+            }
+        }
+        let prev1 = bt
+            .preview_action(0, 0, ChosenAction::Act { kind: ActionKind::Skill, target: None })
+            .expect("ok");
+        let prev2 = bt
+            .preview_action(0, 0, ChosenAction::Act { kind: ActionKind::Skill, target: None })
+            .expect("ok");
+        assert_eq!(prev1, prev2, "prévia é pura (idempotente)");
+        let mut hp_depois: Vec<i32> = Vec::new();
+        for s in 0..2 {
+            for k in 0..4 {
+                hp_depois.push(bt.unit(s, k).hp);
+            }
+        }
+        assert_eq!(hp_antes, hp_depois, "prévia não muta HP");
     }
 
     #[test]
