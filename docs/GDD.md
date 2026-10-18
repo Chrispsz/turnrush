@@ -30,10 +30,25 @@ Pilares:
 
 ```
 Menu → Draft: 8 cartas na mesa, escolha 4
-     → Batalha 4v4 MANUAL (você comanda cada ação)
-     → vitória → Recompensa: +10% dano | +10% vida | +5%/+5%
-     → próximo inimigo escala → … 3 vitórias = run completa
+     → Batalha 4v4 INTERATIVA (você comanda cada ação; 3ª luta = BOSS)
+     → vitória → CARTA: escolha 1 de 3 (Equipe/Unidade/Tática; 1 reroll)
+     → próximo inimigo escala (+11% dano/+7% vida por vitória) → …
+     → 3 vitórias = run completa
 ```
+
+- **Batalha interativa (v0.7)**: engine dedicada (`interactive.rs`) com
+  **timeline visível** (ordem por SPD), **Fluxo** (⚡; teto 100, +10/rodada,
+  Padrão grátis gera +15, Skill 30/CD 2, Mystery 60/CD 3 com desbloqueio
+  R2/R3, Interrupt 35/CD 3), **prévia exata** de cada ação antes de confirmar
+  (o número previsto é o que acontece), **perseguição manual** (janela dourada:
+  ENTER persegue, ESC recusa) e **interrupt** (atordoar/silenciar inimigo que
+  ainda vai agiar — sem aviso da UI; leia a timeline e o ⚡ alheio). Teto de
+  10 rodadas, desempate por % de HP. A IA inimiga usa a MESMA API do jogador
+  (simetria testada) — zero trapaça.
+- **Cartas (roguelike)**: raridades comum/incomum/rara (600/300/100),
+  preferência de clã +10% de peso, sem repetição na run, cartas de unidade
+  exigem alvo vivo, teto de poder acumulado da run de **+30%** (gate Monte
+  Carlo: sorte vs média ≤ 10 p.p.).
 
 - **Batalha manual (v0.6)**: a engine executa a batalha **por passos** e
   **pausa na vez de cada unidade sua**. O painel inferior mostra a unidade

@@ -254,3 +254,45 @@ Bevy 0.20 com `default-features = false` + features mínimas de UI. Estados
 - Batalha 1v1 isolada: ~2–4 µs (sandbox 2 vCPU).
 - Testes completos do workspace: < 1 s (release).
 - `cargo clippy --all-targets -- -D warnings`: limpo.
+
+
+---
+
+## v0.7 — modo interativo (manual-first)
+
+### `crates/turnrush-core/src/interactive.rs`
+Motor de batalha interativo determinístico (`InteractiveBattle`), paralelo ao
+modo compacto `Formation4v4::run` (que permanece a fonte do Monte Carlo):
+
+- **API**: `prompt() -> TurnPrompt`, `legal_actions(side, slot)`,
+  `preview_action(...)` (exata, pura, sem RNG), `execute_action(ChosenAction)`
+  e `timeline()`. Eventos finos `BattleEvent` — o cliente NUNCA parseia texto.
+- **Economia**: fluxo (teto 100, +10/rodada, Padrão grátis +15, Skill 30/CD 2,
+  Mystery 60/CD 3, Interrupt 35/CD 3, passiva ≤ +20/rodada).
+- **Tiers**: derivados da mystery do contrato (Skill = forma base 120/100%,
+  Mystery = forma final 200/100%, suporte ×1650‰); desbloqueio por papel
+  (striker R3, demais R2) ou `unlock_schedule` JSON.
+- **Interrupt**: stun/silence com janela "inimigo que ainda vai agiar".
+- **Chase manual**: fila de estados por janela (`ConfirmChase`), 1 chase por
+  unidade por rodada (Ambidestria = 2), teto de 12 estados pendentes.
+- **SideEdge**: escala inimigo/boss + bônus de cartas (ATK/HP por unidade,
+  fluxo extra, eco de cadeia por elo com teto, revival 20%, unlock antecipado).
+- **IA simétrica**: `greedy_decide` usa só a API pública — contrato testado.
+- Teto de **10 rodadas**; desempate por % de HP total.
+
+### `crates/turnrush-core/src/rewards.rs`
+Pool de 12 cartas (Equipe/Unidade/Tática), raridade 600/300/100, preferência
+de clã ×1,1, `RunState` (compra/reroll/teto de poder 300‰) e o gate Monte
+Carlo da run (sorte vs média ≤ 10 p.p.).
+
+### `crates/turnrush-game/src/controller.rs`
+`BattleController`: fila de `BattleEvent` (sem parse de texto), `pump()` com
+fases `PlayingEvents/AwaitingPlayer/Done`, prompt em cache e IA delegada ao
+core. Testado headless (sem winit/wgpu).
+
+### Cliente (app.rs)
+Painel de comando ([1]-[4] + Auto [Z]), prévia exata, fila de alvos
+(Q/W/E/R inimigos, A/S/D/F aliados), janela de perseguição dourada
+(ENTER/ESC), barras de Fluxo nos 8 personagens (⚡ simétrico), timeline da
+rodada no cabeçalho, cartas entre batalhas com reroll, BOSS na 3ª luta.
+`--playback` preserva o modo legado v0.6; `--shot` captura a UI de comando.

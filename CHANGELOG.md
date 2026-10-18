@@ -4,6 +4,48 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/);
 versões seguem [SemVer](https://semver.org/lang/pt-BR/). O jogo está em
 **fase de mecânica**: arte/sprites/nomes finais são esboços conscientes.
 
+## [0.7.0] — modo INTERATIVO completo: fluxo, tiers, interrupt, cartas e boss
+
+### Adicionado
+- **Engine interativa** (`interactive.rs`): máquina de estados determinística
+  para controle manual total — `prompt`/`legal_actions`/`preview_action`/
+  `execute_action`/`timeline`, eventos finos (`BattleEvent`) consumidos pelo
+  cliente sem parse de texto. O modo compacto (`Formation4v4::run`) segue
+  intacto como fonte do Monte Carlo.
+- **Economia de Fluxo** (substitui chakra no modo interativo): teto 100,
+  +10 por rodada, Padrão grátis e gera ⚡+15, **Skill** ⚡30 (CD 2), **Mystery**
+  ⚡60 (CD 3, destrava R2/R3 por papel ou `unlock_schedule` do JSON),
+  **Interrupt** ⚡35 (CD 3). Geração passiva com teto +20/rodada.
+- **Tiers de habilidade derivados do roster**: Skill = forma base da mystery
+  (120% alvo único / 100% multi, utilidade do contrato, sem estado); Mystery =
+  forma final (200% único / 100% multi, cura/escudo ×1,65, estado + DoT +
+  perfuração). Bandas de dano da spec respeitadas e testadas.
+- **Interrupt**: atordoa (perde a ação) ou silencia (sem Skill/Mystery) um
+  inimigo que AINDA vai agiar na rodada — janela validada pela engine, zero
+  aviso na UI (a informação existe: timeline + ⚡ do inimigo, simétrico).
+- **Perseguição manual (chase)**: a janela PAUSA o jogo, aliados elegíveis
+  brilham dourado; [ENTER] persegue, [ESC] recusa (tática válida). Bônus de
+  primeira perseguição do time (passivas Nimbo/Alísio) modelados.
+- **Cartas roguelike** (`rewards.rs`): 12 cartas (Equipe/Unidade/Tática) com
+  raridade 600/300/100, preferência de clã +10%, sem repetição na run, alvo
+  vivo para cartas de unidade e **teto de poder +30%**. Gate Monte Carlo:
+  run sortuda vs média ≤ 10 p.p. (medido: 1,0 p.p.).
+- **Run v0.7**: 3 batalhas (a 3ª = **BOSS** escalado), 1 carta entre batalhas
+  com reroll; tela de vitória reconstruída.
+- **Teto de 10 rodadas** com desempate por % de HP total.
+- **IA simétrica** (`greedy_decide` no core): decide apenas por
+  `legal_actions` + `preview_action` — contrato de simetria testado
+  (zero submissão ilegal em batalhas completas; espelho 25–75%).
+- **Cliente Bevy v0.7**: controlador de batalha (`controller.rs`), painel de
+  comando com prévia EXATA (dano/cura/escudo/estados/fluxo), barras de Fluxo
+  nos 8 personagens (⚡ simétrico), timeline da rodada no cabeçalho, teclado
+  completo ([1]-[4] ações, Q/W/E/R alvo inimigo, A/S/D/F aliado, ENTER, ESC,
+  ESPAÇO 2×, Z Auto), `--playback` preserva o modo legado v0.6.
+
+### Alterado
+- `--check` também conduz uma batalha interativa completa headless.
+- Tela "Como Jogar" reescrita com as regras v0.7.
+
 ## [0.6.0] — identidade própria + batalha MANUAL + partidas 2× mais rápidas
 
 ### Adicionado

@@ -368,6 +368,10 @@ pub struct DecTargetLabel(pub usize);
 #[derive(Component, Clone, Copy, PartialEq)]
 pub struct DecBtn(pub DecKind);
 
+/// Rótulo de texto de um botão de ação (atualizado pelo sync).
+#[derive(Component, Clone, Copy, PartialEq)]
+pub struct DecBtnLabel(pub DecKind);
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum DecKind {
     Standard,
@@ -419,28 +423,28 @@ const AJUDA: [(&str, &str); 7] = [
         "A oferta é a mesma para os dois lados (simetria por construção).\nA IA monta o time inimigo entre os personagens restantes do elenco.",
     ),
     (
-        "2 · BATALHA 4v4 POR TURNOS (VOCÊ COMANDA)",
-        "Turnos alternados A-B-A-B por posição; quem abre a 1ª rodada é sorteado.\nNa vez de cada unidade sua, o painel inferior oferece a Mystery (custo de\nchakra) ou o Padrão com alvo clicável. Máximo de 12 rodadas — desempate\npor % de vida. Chakra: 30 inicial · +14 por rodada · teto 100.",
+        "2 · BATALHA 4v4 (VOCÊ COMANDA TUDO)",
+        "Timeline visível (SPD); A-B intercalado; quem abre a 1ª rodada é sorteado.\nPainel de comando: Padrão [1] grátis (⚡+15) · Skill [2] ⚡30/CD 2 ·\nMystery [3] ⚡60/CD 3 (destrava R2/R3 por papel) · Interrupt [4] ⚡35/CD 3.\nFluxo: +10/rodada, teto 100. Prévia EXATA antes de confirmar.\nMáximo de 10 rodadas — desempate por % de vida.",
     ),
     (
-        "3 · CHAIN COMBOS (CADEIAS DE PERSEGUIÇÃO)",
-        "Mysteries e ataques aplicam estados: Launch, Knockback e Knockdown.\nAliados com chase de gatilho compatível encadeiam golpes no mesmo turno\n— até 12 elos por cadeia, 1 chase por unidade por rodada.",
+        "3 · CHAIN COMBOS — PERSEGUIÇÃO MANUAL",
+        "Mysteries e ataques aplicam Arremessado/Empurrado/Derrubado. A janela de\nperseguição PAUSA o jogo: elegíveis brilham dourado. [ENTER] persegue ·\n[ESC] recusa (tática válida). Até 12 elos, 1 chase por unidade por rodada.",
     ),
     (
-        "4 · PASSIVAS E DANO CONTÍNUO",
-        "Cada carta tem uma passiva sempre ativa (reflexo, cura de rodada, chakra\nextra, bônus contra estados…). Queimadura/Veneno: 10% do ATK do aplicador\npor rodada, durante 2 rodadas, sem acumular.",
+        "4 · INTERRUPT — LEIA O INIMIGO",
+        "Os 4 Tacticians têm Interrupt: atordoam ou silenciam um inimigo que AINDA\nvai agiar nesta rodada. O jogo NÃO avisa — leia a timeline e o ⚡ do inimigo\n(mostrado dos dois lados). Atordoado perde a ação; silenciado não conjura.",
     ),
     (
-        "5 · RECOMPENSA E ESCALADA",
-        "Vitória → escolha: +10% dano · +10% vida · Equilíbrio +5%/+5%.\nO próximo inimigo escala +11% de dano e +7% de vida POR VITÓRIA sua.\n3 vitórias completam a run; uma derrota encerra (roguelike).",
+        "5 · CARTAS ENTRE BATALHAS (ROGUELIKE)",
+        "Vitória → escolha 1 de 3 cartas (Equipe/Unidade/Tática) — 1 reroll por\nbatalha. Raridades + preferência de clã. Teto de poder da run: +30%.\nA 3ª batalha é o BOSS. 3 vitórias completam a run.",
     ),
     (
         "6 · CLÃS E BALANCEAMENTO",
         "Pyreborn, Duskmere, Thornvale e Skyrend dão identidade — NÃO existe\ncontador duro entre clãs. O calibrador DWC v2 mantém todas as composições\nem ~50% de winrate médio: a vantagem vem da sua leitura do confronto.",
     ),
     (
-        "7 · CONTROLES (modo offline)",
-        "Tudo no mouse. Na batalha: Mystery/Padrão no painel inferior — Padrão\nabre os alvos inimigos (clique num inimigo vivo ou use Auto-alvo).\nBotão Auto entrega as decisões à IA; Acelerar alterna playback 1×/6×.",
+        "7 · CONTROLES DA BATALHA",
+        "MOUSE: clique nas ações e nos alvos. TECLADO: [1]-[4] ações · Q/W/E/R\nalvo inimigo · A/S/D/F alvo aliado · ENTER confirma/auto-alvo/persegue ·\nESC cancela/recusa · ESPAÇO 2× · Z modo Auto (IA joga por você).\nA IA inimiga usa EXATAMENTE as mesmas informações que você.",
     ),
 ];
 
@@ -1200,7 +1204,7 @@ fn setup_roots(tex: Res<SpriteAssets>, mut cmds: Commands) {
                 let lbl = p
                     .spawn((
                         SpeedLabel,
-                        Text::new("Acelerar ▶"),
+                        Text::new("1× ▶ [ESPAÇO]"),
                         TextFont { font_size: FontSize::Px(14.0), ..default() },
                         TextColor(TXT_DIM),
                     ))
@@ -1256,8 +1260,8 @@ fn setup_roots(tex: Res<SpriteAssets>, mut cmds: Commands) {
                     TextColor(TXT_DIM),
                     Node {
                         position_type: PositionType::Absolute,
-                        left: Val::Percent(24.0),
-                        top: Val::Px(12.0),
+                        left: Val::Px(24.0),
+                        top: Val::Px(30.0),
                         ..default()
                     },
                 ));
@@ -1317,6 +1321,7 @@ fn setup_roots(tex: Res<SpriteAssets>, mut cmds: Commands) {
                     let mkbtn = |row: &mut ChildSpawnerCommands, kind: DecKind, width: f32| {
                         let lbl = row
                             .spawn((
+                                DecBtnLabel(kind),
                                 Text::new("—"),
                                 TextFont { font_size: px(13.0), ..default() },
                                 TextColor(TXT),
@@ -1945,13 +1950,7 @@ fn battle_enter(run: Res<RunRes>, mut header: BattleHdrQuery, mut log: BattleLog
         *t = Text::new("");
     }
     if let Ok(mut t) = wins.single_mut() {
-        *t = Text::new(format!(
-            "Vitórias {}/{} · inimigo +{}% dano +{}% vida",
-            run.wins,
-            VICTORIES_TO_WIN,
-            run.wins * 11,
-            run.wins * 7
-        ));
+        *t = Text::new(format!("Vitórias {}/{}", run.wins, VICTORIES_TO_WIN));
     }
 }
 
@@ -2207,8 +2206,24 @@ fn preencher_painel(ctl: &mut BattleController, chase: bool, pending: &mut Pendi
         Some(l) => (format!("[{}] {nome}", match k { ActionKind::Standard => "1", ActionKind::Skill => "2", ActionKind::Mystery => "3", _ => "4" }), l.fluxo_cost, true, String::new()),
         None => {
             let motivo = match k {
-                ActionKind::Mystery => format!("R{}", u.mystery_unlock_round),
-                ActionKind::Skill => "CD".to_string(),
+                ActionKind::Mystery => {
+                    if u.mystery_cd > 0 {
+                        "CD".to_string()
+                    } else if u.silence_turns > 0 {
+                        "silenciado".to_string()
+                    } else {
+                        format!("R{}", u.mystery_unlock_round)
+                    }
+                }
+                ActionKind::Skill => {
+                    if u.skill_cd > 0 {
+                        "CD".to_string()
+                    } else if u.silence_turns > 0 {
+                        "silenciado".to_string()
+                    } else {
+                        String::new()
+                    }
+                }
                 ActionKind::Interrupt => "—".to_string(),
                 _ => String::new(),
             };
@@ -2440,7 +2455,11 @@ fn sync_decision_panel(
     >,
     mut tlabels: Query<
         (&DecTargetLabel, &mut Text),
-        (Without<DecTitleText>, Without<DecPreviewText>, Without<DecMysteryLabel>, Without<DecStandardLabel>, Without<ChaseText>, Without<TimelineText>),
+        (Without<DecTitleText>, Without<DecPreviewText>, Without<DecMysteryLabel>, Without<DecStandardLabel>, Without<ChaseText>, Without<TimelineText>, Without<DecBtnLabel>),
+    >,
+    mut blabels: Query<
+        (&DecBtnLabel, &mut Text),
+        (Without<DecTitleText>, Without<DecPreviewText>, Without<DecMysteryLabel>, Without<DecStandardLabel>, Without<ChaseText>, Without<TimelineText>, Without<DecTargetLabel>),
     >,
 ) {
     if let Ok(mut v) = panel.single_mut() {
@@ -2509,6 +2528,24 @@ fn sync_decision_panel(
             Text::new(format!("{nome} · {hp}%"))
         } else {
             Text::new(format!("{nome} · caído"))
+        };
+    }
+    // rótulos dos botões de ação ([1]-[4] com custo/estado)
+    for (lbl, mut t) in blabels.iter_mut() {
+        let idx = match lbl.0 {
+            DecKind::Standard => 0,
+            DecKind::Skill => 1,
+            DecKind::Mystery => 2,
+            DecKind::Interrupt => 3,
+            DecKind::Auto => continue,
+        };
+        let (nome, custo, disponivel, motivo) = &pending.actions[idx];
+        *t = if *disponivel {
+            Text::new(if *custo > 0 { format!("{nome} · ⚡{custo}") } else { nome.clone() })
+        } else if motivo.is_empty() {
+            Text::new(format!("{nome} (sem ⚡)"))
+        } else {
+            Text::new(format!("{nome} [{motivo}]"))
         };
     }
     // highlight dourado dos perseguidores elegíveis (cena)

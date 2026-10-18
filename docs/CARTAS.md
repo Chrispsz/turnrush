@@ -153,3 +153,31 @@ expansão para não confundir leitor nem simulador:
 - **Draft de Contratos na UI do 4v4** — hoje o 4v4 usa as 3 recompensas fixas
   e o 1v1 vive no simulador; unificar os dois sistemas de draft é passo
   natural da v0.6+.
+
+
+---
+
+## v0.7 — cartas de run (roguelike)
+
+Entre batalhas vencidas: escolha **1 de 3** (1 reroll por batalha). Teto de
+poder acumulado da run: **+30%** (300‰). Cartas de Unidade exigem um alvo
+vivo na compra. Peso por raridade: comum 600 / incomum 300 / rara 100;
+preferência de clã multiplica o peso por 1,1.
+
+| Carta | Classe | Raridade | Poder | Efeito |
+|---|---|---|---|---|
+| Chama Interna | Equipe | comum | 80 | +8% ATK do time |
+| Casca de Ferro | Equipe | comum | 100 | +10% HP do time |
+| Fluxo Estável | Equipe | incomum | 60 | +2 ⚡/rodada por unidade |
+| Eco de Combate | Equipe | rara | 100 | chase +10% por elo da cadeia (máx +30%) |
+| Fúria Interior | Unidade | comum | 70 | +15% ATK, -5% HP (1 unidade viva) |
+| Manto Denso | Unidade | comum | 60 | +12% HP, -3% ATK (1 unidade viva) |
+| Gatilho Rápido | Unidade | incomum | 50 | Mystery destrava 1 rodada antes |
+| Veia de Aço | Unidade | rara | 110 | +10% ATK e +10% HP (1 unidade viva) |
+| Ambidestria | Tática | rara | 90 | 2 chases por unidade por rodada |
+| Último Suspiro | Tática | rara | 100 | 1ª morte do time revive com 20% do HP |
+| Sangue por Poder | Tática | incomum | 60 | -10% HP, +15% ATK do time |
+| Respiração Ritmada | Equipe | comum | 30 | +1 ⚡/rodada por unidade |
+
+**Gate de sorte** (Monte Carlo, 200 runs): winrate da estratégia sortuda vs
+aleatória difere ≤ 10 p.p. (medido: ~1 p.p.).

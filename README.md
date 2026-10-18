@@ -12,7 +12,7 @@ e balanceamento Monte Carlo (DWC/LCE).
 |---|---|
 | **Download** | [Releases (AppImage)](https://github.com/Chrispsz/turnrush/releases/latest) |
 | **Docs** | [GDD](docs/GDD.md) · [Arquitetura](docs/ARQUITETURA.md) · [Personagens](docs/PERSONAGENS.md) · [Cartas](docs/CARTAS.md) · [Nomenclatura](docs/NAMING.md) · [Logs](docs/LOGS.md) |
-| **Status** | v0.6.0 — batalha manual + partidas rápidas, 51 testes, clippy limpo |
+| **Status** | v0.7.0 — modo interativo completo (fluxo, tiers, interrupt, chase manual, cartas roguelike, boss), 90 testes, clippy limpo |
 
 ## O que é
 
@@ -24,25 +24,29 @@ batalhas 4v4 com **cadeias de combo** (Lançamento → Empurrão → Derrubada),
 equilíbrio é **calibrado por dados** por um simulador Monte Carlo que roda no
 CI a cada commit.
 
-## O jogo hoje (v0.6.0)
+## O jogo hoje (v0.7.0)
 
 ```
-Menu → Como Jogar / Elenco → Draft (escolha 4 de 8) → Batalha 4v4 MANUAL
-     → Recompensa (+10% dano | +10% vida | +5%/+5%) → inimigo escala → 3 vitórias
+Menu → Como Jogar / Elenco → Draft (escolha 4 de 8) → Batalha 4v4 INTERATIVA
+     → CARTA (1 de 3, com reroll) → inimigo escala → 3ª luta = BOSS → 3 vitórias
 ```
 
-- **Modo offline completo**: você **comanda cada ação** das suas unidades no
-  turno delas (painel de decisão: Mystery com custo de chakra, Padrão com
-  alvo clicável) e o adversário é controlado pela IA da engine — botão
-  **Auto** entrega o controle quando quiser só assistir.
-- **Batalha 4v4 por turnos**: ações intercaladas A-B-A-B por posição,
-  chakra por unidade (30 inicial, +14/rodada, teto 100), mysteries com
-  cooldown, cadeias de perseguição (até 12 elos), passivas e dano contínuo
-  (Queimadura/Veneno). **Partidas rápidas**: teto de 12 rodadas e ritmo de
-  dano ×2.5 — média de ~8 rodadas, 94% terminando por K.O. (antes:
-  22 rodadas de atrito).
+- **Modo interativo completo**: você comanda **tudo** — a timeline da rodada é
+  visível (SPD), cada unidade tem Fluxo ⚡ (Padrão grátis e gera +15; Skill 30;
+  Mystery 60 com desbloqueio R2/R3; Interrupt 35), e o painel mostra a
+  **prévia exata** de cada ação antes de confirmar. Perseguições são
+  **manuais**: a janela pausa o jogo, aliados elegíveis brilham dourado —
+  [ENTER] persegue, [ESC] recusa. Unidades com **Interrupt** atordoam ou
+  silenciam um inimigo que ainda vai agiar — o jogo não avisa: leia a
+  timeline e o fluxo alheio.
+- **Roguelike**: entre batalhas você compra 1 de 3 cartas (Equipe/Unidade/
+  Tática, raridades e preferência de clã, teto de poder +30% na run). A 3ª
+  batalha é o BOSS. Teto de 10 rodadas com desempate por % de vida.
+- **IA simétrica**: o adversário decide pela MESMA API que você usa
+  (`legal_actions` + `preview_action`) — contrato testado, zero trapaça.
 - **Menu funcional**: Como Jogar (regras fiéis à engine), Elenco (as 16
-  cartas com kit completo) e botão **Acelerar (1×/6×)** na batalha.
+  cartas com kit completo) e **ESPAÇO = 2×** na batalha (modo legado 1×/6×
+  preservado via `--playback`).
 - **Determinismo total**: RNG xoshiro256** + matemática inteira (per-mille) —
   mesma seed = mesma partida em qualquer plataforma.
 
