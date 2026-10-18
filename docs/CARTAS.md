@@ -1,10 +1,10 @@
-# Cartas & Contratos — TurnRush (esboço v0.5.0)
+# Cartas & Contratos — TurnRush
 
-> **Fase atual: mecânica.** "Carta" hoje tem duas famílias **implementadas na
-> engine**: (1) os **personagens-cartas** do draft de formação (o jogo vira
-> cada personagem do elenco em uma carta clicável) e (2) os **Contratos** —
-> pool de aprimoramentos do modo 1v1 com compensação de sorte (LCE). Nomes e
-> valores são provisórios; a estrutura é definitiva.
+> "Carta" tem hoje duas famílias **implementadas na engine**: (1) os
+> **personagens-cartas** do draft de formação (o jogo vira cada personagem do
+> elenco em uma carta clicável) e (2) os **Contratos** — pool de
+> aprimoramentos do modo 1v1 com compensação de sorte (LCE). A estrutura é
+> definitiva; valores e o escopo do pool são ponto de expansão (ver §6).
 
 ---
 
@@ -20,7 +20,8 @@ Fluxo (`crates/turnrush-game/src/app.rs`):
 3. **Inimigo (IA offline)**: montado entre os personagens restantes do elenco
    — jamais duplica nomes com o time do jogador (garantia do playback).
 4. **Escalação**: cada time joga na ordem dos slots 1º–4º (frente-esq,
-   frente-dir, trás-esq, trás-dir), intercalado A-B-A-B por passo.
+   frente-dir, trás-esq, trás-dir), intercalado A-B-A-B por passo; a IA
+   adversária sorteia a própria ordem por batalha.
 
 ### Recompensas pós-vitória (modificadores de formação)
 
@@ -29,7 +30,7 @@ Após cada vitória o jogador escolhe **um** aprimoramento persistente da run
 
 | Recompensa | Efeito | Código |
 |---|---|---|
-| **Ataque +10%** | dano do time ×1.10 | `dmg_permille += 100` |
+| **Dano +10%** | dano do time ×1.10 | `dmg_permille += 100` |
 | **Vida +10%** | vida (e curas/escudos) ×1.10 | `hp_permille += 100` |
 | **Equilíbrio +5%/+5%** | ambos ×1.05 | `+= 50 / += 50` |
 
@@ -50,12 +51,15 @@ Vencer 3 batalhas (run completa) significa derrotar times com até
 +22% dano / +14% vida — a pressão sobe, o jogador escala junto com as
 recompensas. Empates/derrota encerram a run (roguelike).
 
+> **Este sistema de recompensas é a versão v1** — 3 opções fixas, projeto
+> deliberadamente mínimo. A expansão planejada está em §6.
+
 ---
 
 ## 2. Contratos — pool do modo 1v1 (16 cartas)
 
 Fonte: `CARD_POOL` em `crates/turnrush-core/src/cards.rs`. Tiers 1–4; o
-**valor nominal** alimenta o LCE (§3). Todos os efeitos são **aditivos aos
+**valor nominal** alimenta o LCE (§4). Todos os efeitos são **aditivos aos
 stats** e aplicados na montagem do time (`build_team`).
 
 ### Tier 1 — refinamentos (valor 10)
@@ -101,11 +105,17 @@ RNG). Cada um escolhe 1; cartas de unidade vão para a unidade mais compatível
 
 ---
 
-## 3. LCE — Luck Compensation Engine (compensação em tempo real)
+## 3. Draft simétrico — a regra que governa tudo
 
-Como a oferta é idêntica, sorte assimétrico **não existe** — mas escolhas
-podem desviar valor. O LCE rastreia o **valor nominal acumulado** de cada
-jogador:
+Toda oferta de cartas no TurnRush é **simétrica**: os dois lados veem
+exatamente as mesmas opções, sorteadas do mesmo stream de RNG. Sorte
+assimétrica **não existe por construção** — o que existe é diferença de
+escolha, e é isso que as camadas seguintes compensam e calibram.
+
+## 4. LCE — Luck Compensation Engine (compensação em tempo real)
+
+Como a oferta é idêntica, escolhas podem desviar valor. O LCE rastreia o
+**valor nominal acumulado** de cada jogador:
 
 - Se estou **atrás por ≥ 20 pontos** (2 tiers), minha próxima carta é
   **promovida +1 tier** (`effective_card` → `promote`).
@@ -114,24 +124,32 @@ jogador:
 - O valor acumulado usa a carta **efetiva** (pós-promoção), então a dívida se
   liquida sozinha.
 
-## 4. DWC v2 — a calibração por trás das cartas
+## 5. DWC — a calibração por trás das cartas
 
 O **DWC (Dynamic Win-rate Calibration)** é o que permite dar cartas fortes sem
-quebrar o jogo: o simulador Monte Carlo joga **TODAS as composições**
-(C(12,3) = 220 → 48.180 confrontos ordenados) e calibra modificadores de
-dano/vida **por composição** (fase 1) e **por confronto** (fase 2 — corrige
-pares com winrate > 0.85 ou < 0.15), com passada de verificação em seeds
-novos. Gate de CI: desvio médio ≤ 0.15. Relatório JSON em cada execução
-(`--out`).
+quebrar o jogo: o simulador Monte Carlo joga as composições e calibra
+modificadores de dano/vida **por composição** (fase 1) e **por confronto**
+(fase 2 — corrige pares com winrate > 0.85 ou < 0.15), com passada de
+verificação em seeds novos. Gate de CI: desvio médio ≤ 0.15 (medido: 0.119 no
+1v1; 0.077 no 4v4). Relatório JSON em cada execução (`--out`).
 
 ---
 
-## 5. O que vem depois (esboço)
+## 6. Expansão futura (placeholders explícitos)
 
-- **Cartas de formação no jogo 4v4** (contratos equivalentes aos do 1v1 —
-  a estrutura `FormationMods` já aceita qualquer par dano/vida).
-- **Raridades visuais** (comum/raro/épico) — hoje o tier já define o valor.
-- **Sinergias de facção** — bônus por 2+ cartas da mesma facção na formação
-  (identidade sem contador duro).
-- **Nomes/temas finais** — a nomenclatura atual é placeholder explícito
-  ("esboço"), decidido na fase de polimento.
+O que está listado aqui **ainda não existe na engine** — está marcado como
+expansão para não confundir leitor nem simulador:
+
+- **Mais cartas de recompensa no 4v4** — a estrutura `FormationMods` aceita
+  qualquer par dano/vida; novas famílias (ex.: efeitos por classe, custo de
+  chakra inicial) exigem campos novos no contrato + recalibração do DWC.
+- **Boons de cadeia** — aprimoramentos que interagem com as cadeias de combo
+  (ex.: "a primeira perseguição do time causa +X%", "chase aplica estado
+  extra"). Dependem de extensão do contrato v2.
+- **Sinergias de clã** — bônus por 2+ cartas do mesmo clã na formação
+  (identidade sem contador duro entre clãs).
+- **Raridades visuais** (comum/raro/épico) — hoje o tier já define o valor
+  nominal do LCE; visual viria depois.
+- **Draft de Contratos na UI do 4v4** — hoje o 4v4 usa as 3 recompensas fixas
+  e o 1v1 vive no simulador; unificar os dois sistemas de draft é passo
+  natural da v0.6+.

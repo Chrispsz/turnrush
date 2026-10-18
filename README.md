@@ -1,19 +1,28 @@
 # TurnRush
 
-**Roguelike acelerado** com combate por turnos estilo **Naruto Online** —
-draft simétrico de cartas, cadeias de combo (Lançamento → Empurrão →
-Derrubada) e **balanceamento absoluto por dados** (DWC v2 + LCE).
+**Tactical turn-based roguelike** com cadeias de combo (chase), draft simétrico
+e balanceamento Monte Carlo (DWC/LCE).
 100% Rust · modo **offline vs IA** · Linux first · CI no GitHub Actions.
 
 > **Fase atual: mecânica e gameplay.** Menu/telas são esboços funcionais
-> (arte, sprites e nomes finais vêm depois). Tudo que está documentado aqui
-> está implementado e testado na engine.
+> (arte, sprites e polimento visual vêm depois). Tudo que está documentado
+> aqui está implementado e testado na engine.
 
 | | |
 |---|---|
 | **Download** | [Releases (AppImage)](https://github.com/Chrispsz/turnrush/releases/latest) |
-| **Docs** | [GDD](docs/GDD.md) · [Arquitetura](docs/ARQUITETURA.md) · [Personagens](docs/PERSONAGENS.md) · [Cartas](docs/CARTAS.md) · [Logs](docs/LOGS.md) · [Inspiracoes](docs/INSPIRACOES.md) |
+| **Docs** | [GDD](docs/GDD.md) · [Arquitetura](docs/ARQUITETURA.md) · [Personagens](docs/PERSONAGENS.md) · [Cartas](docs/CARTAS.md) · [Nomenclatura](docs/NAMING.md) · [Logs](docs/LOGS.md) |
 | **Status** | v0.5.0 — jogo 2D jogável offline vs IA, 44 testes, clippy limpo |
+
+## O que é
+
+TurnRush é um jogo de combate tático por turnos em que **a sorte não decide**:
+não existem itens, loot ou níveis persistentes — a única vantagem permitida é
+a estratégia da composição que você monta. Cada run é uma escalada curta de
+batalhas 4v4 com **cadeias de combo** (Lançamento → Empurrão → Derrubada),
+**draft simétrico** de cartas e recompensas persistentes — e todo o
+equilíbrio é **calibrado por dados** por um simulador Monte Carlo que roda no
+CI a cada commit.
 
 ## O jogo hoje (v0.5.0)
 
@@ -22,15 +31,37 @@ Menu → Como Jogar / Elenco → Draft (escolha 4 de 8) → Batalha 4v4
      → Recompensa (+10% dano | +10% vida | +5%/+5%) → inimigo escala → 3 vitórias
 ```
 
-- **Modo offline completo**: o adversário é controlado pela IA do engine
+- **Modo offline completo**: o adversário é controlado pela IA da engine
   (a mesma heurística validada pelo simulador Monte Carlo).
-- **Batalha 4v4 por turnos**: alternância A-B-A-B, chakra (20 inicial,
-  +12/rodada, teto 100), mysteries com cooldown, cadeias de perseguição
-  (até 12 elos), passivas, dano contínuo (Queimadura/Veneno).
+- **Batalha 4v4 por turnos**: ações intercaladas A-B-A-B por posição,
+  chakra por unidade (20 inicial, +12/rodada, teto 100), mysteries com
+  cooldown, cadeias de perseguição (até 12 elos), passivas e dano contínuo
+  (Queimadura/Veneno).
 - **Menu funcional**: Como Jogar (regras fiéis à engine), Elenco (as 16
   cartas com kit completo) e botão **Acelerar (1×/6×)** na batalha.
 - **Determinismo total**: RNG xoshiro256** + matemática inteira (per-mille) —
   mesma seed = mesma partida em qualquer plataforma.
+
+## Recursos
+
+- **Engine determinística ultraleve** — batalhas resolvidas em microssegundos
+  (200 batalhas 4v4 em < 2 ms no teste de regressão, build release); zero
+  dependências externas no `turnrush-core`.
+- **4v4 com cadeias de combo (chase)** — três estados de controle
+  (Lançamento/Empurrão/Derrubada) alimentam perseguições encadeadas entre
+  aliados, com limite de 1 por unidade/rodada e 12 elos por cadeia.
+- **Draft simétrico** — os dois lados veem a mesma oferta de cartas; a sorte
+  não é assimétrica por construção.
+- **DWC/LCE** — calibração Monte Carlo de todas as composições (DWC) e
+  compensação de sorte em tempo real (LCE), com gate de equilíbrio no CI.
+- **Cliente Bevy 2D** — janela 1280×720, draft visual, playback animado da
+  batalha, recompensas e escalada do inimigo. Roster embutido no binário —
+  **zero assets externos**.
+- **Logs de sessão completos** — do iniciar ao fechar, em `~/TurnRush/logs`
+  (`.log` legível + `.jsonl` estruturado), incluindo captura de
+  SIGINT/SIGTERM/SIGHUP.
+- **Crash reports** — hook de panic global grava `crash-*.log` com backtrace
+  e as últimas ~200 linhas da sessão.
 
 ## Quick start
 
@@ -54,33 +85,50 @@ cargo run --release -p turnrush-sim -- --quick --gate   # gate de equilíbrio (C
 cargo run --release -p turnrush-sim --                  # calibração completa (Monte Carlo)
 ```
 
+## Clãs e classes
+
+4 clãs × 4 classes = **16 personagens** (detalhes completos em
+[docs/PERSONAGENS.md](docs/PERSONAGENS.md); racional dos nomes em
+[docs/NAMING.md](docs/NAMING.md)):
+
+| Clã | Identidade | Reaver | Bastion | Mender | Tactician |
+|---|---|---|---|---|---|
+| **PYREBORN** | fogo · agressão | Ignia Emberbright | Orson Moltenwall | Amara Sweetflame | Nimbo Smokeveil |
+| **DUSKMERE** | maré · controle | Nereo Saltblade | Dalva Reefwarden | Mel Tidemother | Ligeia Coldmist |
+| **THORNVALE** | natureza · veneno | Tina Twinthorn | Aro Barkshell | Yara Lifesap | Ivo Finewire |
+| **SKYREND** | tempestade · velocidade | Reia Thunderstep | Aki Countercut | Alísio Lightgale | Volta Cyclone |
+
+Por decisão de balanceamento **não existe contador duro entre clãs** — o DWC
+calibra todas as composições para ~50% de winrate médio. Clã é identidade
+temática/mecânica, não pedra-papel-tesoura.
+
 ## Crates
 
 | Crate | Papel |
 |---|---|
-| **turnrush-core** | Motor determinístico (zero dependências): combate 1v1 e Formação 4v4 (chakra, cooldowns, cadeias de chase, passivas), draft simétrico + LCE, partida de 9 rodadas, calibrador DWC v2, roster data-driven (contrato JSON v2), logs de sessão |
-| **turnrush-sim** | CLI: simulador Monte Carlo de TODAS as composições (C(12,3) = 220 → 48.180 confrontos), gate de equilíbrio de CI, diagnóstico de hard counters, relatório JSON |
-| **turnrush-game** | Cliente 2D jogável (Bevy 0.20): menu, Como Jogar, Elenco, draft visual, batalha com playback animado (barras de HP, flashes, log, Acelerar 1×/6×), recompensas, escalada de inimigos, fim de run. Roster embutido no binário — **zero assets externos** |
+| **turnrush-core** | Motor determinístico (zero dependências): Formação 4v4 (chakra, cooldowns, cadeias de chase, passivas), draft simétrico + LCE, partida 1v1 de 9 rodadas, calibrador DWC, roster data-driven (contrato JSON v2), logs de sessão |
+| **turnrush-sim** | CLI: simulador Monte Carlo de composições (clãs puras + mistas), gate de equilíbrio de CI, diagnóstico de confrontos extremos, relatório JSON |
+| **turnrush-game** | Cliente 2D jogável (Bevy 0.20): menu, Como Jogar, Elenco, draft visual, batalha com playback animado (barras de HP, flashes, log, Acelerar 1×/6×), recompensas, escalada de inimigos, fim de run |
 
 ## Documentação
 
 | Doc | Conteúdo |
 |---|---|
-| [docs/GDD.md](docs/GDD.md) | Game Design Document — visão, loop, combate, equilíbrio em 3 camadas |
-| [docs/ARQUITETURA.md](docs/ARQUITETURA.md) | Arquitetura técnica — crates, determinismo, logger, CI/CD, lições Bevy |
-| [docs/PERSONAGENS.md](docs/PERSONAGENS.md) | **Os 16 personagens do jogo + os 12 do modo 1v1**: stats, mystery, padrão, chase, passiva — gerado a partir da engine |
-| [docs/CARTAS.md](docs/CARTAS.md) | **Sistema de cartas**: draft de formação, recompensas, escalada, os 16 Contratos do 1v1, LCE e DWC |
+| [docs/GDD.md](docs/GDD.md) | Game Design Document — visão, loop da run, combate 4v4, clãs, equilíbrio em 3 camadas |
+| [docs/ARQUITETURA.md](docs/ARQUITETURA.md) | Arquitetura técnica — crates, fluxo de dados, determinismo, logger, CI/CD, AppImage |
+| [docs/PERSONAGENS.md](docs/PERSONAGENS.md) | Os 16 personagens: stats, mystery, padrão, chase, passiva e estilo de jogo de cada um |
+| [docs/CARTAS.md](docs/CARTAS.md) | Sistema de cartas: draft de formação, recompensas, escalada, os 16 Contratos do 1v1, LCE e DWC |
+| [docs/NAMING.md](docs/NAMING.md) | Nomenclatura oficial (clãs, classes, personagens) e proposta de nomes para habilidades |
 | [docs/LOGS.md](docs/LOGS.md) | Logs de sessão completos (`~/TurnRush/logs`): início→fim, panics, sinais (Ctrl+C) |
-| [docs/INSPIRACOES.md](docs/INSPIRACOES.md) | Referências: 9 Kings, Naruto Online (banco de dados em `data/naruto-online/`) |
 
 ## Balanceamento (filosofia)
 
 1. **Draft simétrico** — os dois lados veem a mesma oferta (nenhuma assimetria existe).
 2. **LCE** — quem está atrás no valor acumulado recebe a próxima carta promovida +1 tier.
-3. **DWC v2** — Monte Carlo de todas as composições calibra dano/vida por composição
-   **e por confronto** (mata hard counters > 0.85/< 0.15); gate de CI: desvio médio ≤ 0.15.
-4. **Facções (Ember/Tide/Verdant/Storm)** são identidade — **sem contador duro**
-   entre facções.
+3. **DWC** — Monte Carlo de todas as composições calibra dano/vida por composição
+   **e por confronto** (neutraliza hard counters); gate de CI: desvio médio ≤ 0.15
+   (medido: 0.077 no gate completo do 4v4).
+4. **Clãs são identidade — sem contador duro** entre clãs.
 
 ## Desenvolvimento
 
@@ -91,14 +139,19 @@ cargo run --release -p turnrush-sim --                  # calibração completa 
 - Logs de sessão em `~/TurnRush/logs` cobrem **do iniciar ao fechar**: limpo
   (`session_end`), panic (`crash-*.log` com backtrace) e sinais
   (`session_interrupted`, exit 128+sig).
+- CI: **Build & Balance CI** a cada push (testes + gates de equilíbrio 1v1 e 4v4 +
+  build Linux + smoke headless) com **cron noturno** rodando o Monte Carlo completo;
+  **Release** automática por tag `v*` gerando o AppImage.
 
 ## Roadmap
 
 - ✅ M1 — motor determinístico + simulador + partida jogável local
 - ✅ M3 (1ª versão) — cliente 2D jogável offline vs IA (arte final pendente)
-- ⏳ M2 — servidor autoritativo (WebSocket) para o multiplayer estilo Naruto Online
+- ⏳ Renomear habilidades/passivas para inglês (ver [docs/NAMING.md](docs/NAMING.md))
+- ⏳ Expansão de cartas (boons de cadeia, sinergias de clã) — ver [docs/CARTAS.md](docs/CARTAS.md)
+- ⏳ M2 — servidor autoritativo (WebSocket) para o multiplayer online
 - ⏳ 1v1 com draft de cartas na UI do jogo (hoje o 1v1 vive no simulador)
-- ⏳ Arte, sprites, nomes finais e polimento (fase pós-mecânica)
+- ⏳ Arte, sprites e polimento visual (fase pós-mecânica)
 - ⏳ Beta fechada Linux + ranqueado
 
 ## Licença

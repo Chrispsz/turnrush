@@ -1,4 +1,4 @@
-//! Modo **Formação 4v4** — combate por turnos estilo Naruto Online.
+//! Modo **Formação 4v4** — combate por turnos tático com cadeias de chase.
 //!
 //! - 4 unidades por lado em formação 2×2 (frente/trás × esquerda/direita).
 //! - Ordem de movimento por slot (`order: [usize; 4]` — 1º..4º do time).
@@ -530,7 +530,7 @@ impl Formation4v4 {
     ///
     /// **Jitter de timing**: 1/4 de chance de segurar a mystery por um turno
     /// (semeado, simétrico para os dois lados). Modela a imperfeição humana de
-    /// timing do Naruto Online e dá variância real às batalhas — sem isso,
+    /// timing tático e dá variância real às batalhas — sem isso,
     /// táticas determinísticas tornam confrontos categóricos (wr 0.000/1.000)
     /// e o Monte Carlo não tem o que medir.
     fn act(&mut self, side_idx: usize, slot: usize) {

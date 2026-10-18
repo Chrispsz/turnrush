@@ -1,10 +1,10 @@
-//! Motor de combate por turnos — estilo **Naruto Online**:
+//! Motor de combate por turnos tático:
 //! iniciativa (SPD), energia (chakra, regen 2/turno, cap 10), cooldowns,
 //! **Lançamentos** que iniciam combos e **Perseguições (chase)** que aliados
 //! encadeiam (1× por rodada), status (atordoamento, veneno, escudo, buff/debuff).
 //!
 //! A cada rodada os stats escalam +8% **igualmente para os dois lados**
-//! (estilo 9 Kings: a pressão sobe, mas a simetria permanece).
+//! (a pressão sobe igualmente para os dois lados — a simetria permanece).
 
 use crate::data::ROSTER;
 use crate::rng::Rng;

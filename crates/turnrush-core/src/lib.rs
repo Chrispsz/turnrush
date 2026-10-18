@@ -5,7 +5,7 @@
 //!   (per-mille) → mesma seed = mesma partida em qualquer plataforma.
 //! - **Equilíbrio por construção**: draft simétrico (os dois veem as mesmas cartas),
 //!   LCE compensa sorte em tempo real, DWC calibra composições por winrate medido.
-//! - **Estilo Naruto Online**: iniciativa, energia (chakra), cooldowns, lançamentos
+//! - **Combate por turnos tático**: iniciativa, energia (chakra), cooldowns, lançamentos
 //!   e perseguições (chase) encadeadas — no 1v1 e no **modo Formação 4v4**.
 //! - **Zero dependências externas** (`std` apenas): build pequeno, CI rápido,
 //!   superfície de auditoria mínima (sem unsafe, sem leaks por terceiros).

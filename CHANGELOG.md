@@ -85,7 +85,7 @@ versões seguem [SemVer](https://semver.org/lang/pt-BR/). O jogo está em
 
 ### Adicionado
 - **Modo Formação 4v4** (`formation.rs`): formação 2×2, ordem de movimento,
-  cadeias de perseguição estilo Naruto Online (arremesso/empurrão/derrubada),
+  cadeias de perseguição (arremesso/empurrão/derrubada),
   mysteries com chakra/cooldown, passivas, DoT.
 - **Contrato JSON v2** para rosters (`Roster::from_json`, validação com erro
   por campo) + `data/roster/roster-v2.json` (16 personagens, 4 facções).

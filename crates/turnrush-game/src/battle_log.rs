@@ -23,6 +23,8 @@ pub enum EvKind {
     Reflect,
     /// Estado aplicado (Arremessado, Queimadura, …) com ou sem dano.
     State,
+    /// Elo de cadeia: perseguição (chase) de um aliado.
+    Chase,
     /// Chakra de equipe.
     Chakra,
     /// Fim de batalha.
@@ -115,6 +117,18 @@ pub fn parse_line(line: &str) -> ParsedEvent {
     }
     if has("batalha 4v4") {
         return ParsedEvent { kind: EvKind::Other, source: None, target: None, amount: 0, text: line.trim().to_string() };
+    }
+    if has("persegue") {
+        // "[chase] X persegue {estado} de Y → D de dano"
+        let source = strip_tag(name_before(c, " persegue"));
+        let seg = c.split("persegue").nth(1).unwrap_or("");
+        let target = seg
+            .split(" de ")
+            .nth(1)
+            .map(|rest| rest.split("→").next().unwrap_or("").trim().to_string())
+            .filter(|s| !s.is_empty());
+        let dmg = num_after(c, "→ ").unwrap_or(0);
+        return ParsedEvent { kind: EvKind::Chase, source, target, amount: dmg, text: line.trim().to_string() };
     }
     if has("fim:") {
         return ParsedEvent { kind: EvKind::End, source: None, target: None, amount: 0, text: line.trim().to_string() };

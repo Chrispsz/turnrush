@@ -1,4 +1,7 @@
-# Arquitetura Técnica — TurnRush v0.5.0
+# Arquitetura Técnica — TurnRush
+
+> TurnRush: tactical turn-based roguelike com cadeias de combo (chase),
+> draft simétrico e balanceamento Monte Carlo (DWC/LCE). 100% Rust, Linux first.
 
 ## Visão geral
 
@@ -12,14 +15,14 @@ game/
 │  │     ├─ rng.rs             # xoshiro256** semeado (splitmix64)
 │  │     ├─ types.rs           # Stats, Ability, Unit, Team, Outcome
 │  │     ├─ data.rs            # ROSTER 1v1 (12, const) + contrato JSON v2 (Roster)
-│  │     ├─ cards.rs           # pool de 16 contratos + draft + LCE
+│  │     ├─ cards.rs           # pool de 16 Contratos + draft + LCE
 │  │     ├─ combat.rs          # motor de turnos 1v1 + IA greedy + build_team
 │  │     ├─ formation.rs       # Formação 4v4 (chakra, cadeias, passivas, DoT)
-│  │     ├─ run.rs             # partida 1v1 (9 rodadas, draft, escalação)
-│  │     ├─ balance.rs         # DWC v2 (Monte Carlo + calibração 2 fases + gate)
+│  │     ├─ run.rs             # partida 1v1 (9 rodadas, draft, escalada)
+│  │     ├─ balance.rs         # DWC (Monte Carlo + calibração 2 fases + gate)
 │  │     ├─ json.rs            # parser JSON std-only (contrato v2, relatórios)
 │  │     └─ logger.rs          # logs de sessão (.log+.jsonl, panic, sinais)
-│  ├─ turnrush-sim/            # binário: simulador, probe, gate de CI
+│  ├─ turnrush-sim/            # binário: simulador, gate de CI
 │  │  └─ src/main.rs           # CLI: --quick --gate --out --match --formation*
 │  └─ turnrush-game/           # CLIENTE 2D jogável (Bevy 0.20)
 │     ├─ src/app.rs            # estados: Menu/ComoJogar/Elenco/Draft/Battle/Reward/GameOver
@@ -27,12 +30,11 @@ game/
 │     ├─ src/main.rs           # modos: janela | --check | --shot <base>
 │     └─ assets/DejaVuSansMono.ttf  # fonte embutida (acentos pt-BR)
 ├─ data/
-│  ├─ roster/roster-v2.json    # 16 personagens (fonte da verdade do elenco)
-│  └─ naruto-online/           # estudo do banco de dados do Naruto Online
+│  └─ roster/roster-v2.json    # 16 personagens (fonte da verdade do elenco)
 ├─ .github/workflows/
 │  ├─ build.yml                # testes + gates + smoke --check + build Linux
 │  └─ release.yml              # tag v* → AppImage (jogo) + sim musl
-└─ docs/                       # GDD, ARQUITETURA, PERSONAGENS, CARTAS, LOGS…
+└─ docs/                       # GDD, ARQUITETURA, PERSONAGENS, CARTAS, NAMING, LOGS
 ```
 
 ## Princípios
@@ -41,8 +43,8 @@ game/
    lógica de jogo) e RNG semeado xoshiro256**. A mesma seed produz a mesma
    partida em qualquer plataforma → replays, anti-cheat e testes estatísticos
    reprodutíveis.
-2. **Zero dependências externas** — `std` apenas. CI rápido, build pequeno,
-   sem risco de supply chain.
+2. **Zero dependências externas** — `std` apenas no core. CI rápido, build
+   pequeno, sem risco de supply chain.
 3. **Roster como dados** — o modo 1v1 usa tabela `const`; o 4v4 usa o
    **contrato JSON v2** (`data/roster/roster-v2.json`, embutido no binário via
    `include_str!`) — adicionar personagem = editar JSON + rodar o DWC (o CI
@@ -53,34 +55,155 @@ game/
    engine real (não há lógica de combate duplicada no cliente): o que você vê
    é exatamente o que o simulador calcula.
 
-## Decisões de balanceamento embutidas no motor
-
-| Mecânica | Decisão | Motivo |
-|---|---|---|
-| Multiplicadores | per-mille inteiros | determinismo entre plataformas |
-| Iniciativa | alternância A-B-A-B, início sorteado | iniciativa deixa de ser vantagem composta |
-| Chase | 60% do efeito, 1×/rodada/time | combos existem sem quebrar a economia |
-| Escalada | +8%/rodada de partida (HP+ATK) | pressão crescente estilo 9 Kings |
-| Suporte (cura/escudo/veneno) | escala com DWC **e** com a escalada | suporte nunca fica obsoleto |
-| Febre de batalha | dano +2%/rodada de combate | toda batalha se resolve; anti-turtle |
-| Juízo | dano total causado → HP% | agressividade é recompensada |
-| Escudo | custo/cd elevados + IA anti-spam | stall de escudo era explorável |
-
-## DWC v2 — fluxo
+## Fluxo de dados (roster → engine → eventos → playback)
 
 ```
-para cada iteração (6× no modo rápido):
-    simular 48.180 confrontos ordenados (threads = núcleos)
-    ajustar modificadores por composição (ganho 350/175, amortecimento 0.6)
-calcular ajuste por confronto (só extremos: wr > 0.85 ou < 0.15)
-verificar em seeds novos → relatório + gate
+data/roster/roster-v2.json (contrato v2)
+        │  Roster::from_json (validação com erro por campo) / include_str!
+        ▼
+turnrush-core::Formation4v4        ← comps + seed + FormationMods (DWC)
+        │  run() → Outcome + eventos de texto + contadores (elos, mysteries)
+        ▼
+        ├─► turnrush-sim: Monte Carlo → calibração DWC → gate + relatório JSON
+        └─► turnrush-game: battle_log.rs (parser tolerante) → playback na UI
+                 (barras de HP, flashes por clã, log, Acelerar 1×/6×)
 ```
 
-- Gate v0.1 no CI: desvio médio ≤ 0.15 (rápido) / ≤ 0.12 (completo).
-- O pior confronto é impresso como **diagnóstico de redesign** (gate de hard
-  counters planejado para v0.2).
-- Relatório JSON: stats por comp + matrizes de ajuste (adj_dmg/adj_hp) —
-  insumo direto do futuro servidor autoritativo.
+- O contrato v2 define por personagem: `id`, `name`, `faction`, `role`, stats
+  (`hp/attack/defense/speed`) e 4 slots (`mystery`, `standard`, `chase`,
+  `passive`). Interpretações contratadas do loader: `ally_single`/`self` +
+  `damage_pct` = **cura/escudo** em % do ATK; efeitos de texto das passivas
+  são interpretados por palavras-chave — **o não modelado fica documentado**
+  (`unmodeled()`), nunca silencioso.
+- No cliente, linhas desconhecidas viram `Other` no parser e continuam
+  visíveis no log — o playback nunca quebra por causa de um evento novo.
+
+## Determinismo
+
+- **RNG**: xoshiro256** semeado via splitmix64 (`rng.rs`) — fluxo único por
+  batalha/partida; moeda de abertura, alvos aleatórios (`random_2`), shuffle
+  de ofertas e jitter de mystery saem do mesmo stream.
+- **Matemática**: inteiros per-mille (1000‰ = 100%) em todos os
+  multiplicadores (DWC, escalada, febre, buffs, auras). Zero float no caminho
+  quente; sem `unsafe`.
+- **Testes de determinismo**: mesma seed ⇒ mesmo `Outcome`, mesmos eventos e
+  mesmos contadores de cadeia (cobertos nos 44 testes do workspace).
+- **Seed documentada nos logs**: `battle_start` registra seed e mods —
+  qualquer partida pode ser reproduzida e auditada.
+
+## Logger de sessão (JSONL + LOG) e crash reports
+
+Subsistema std-only (`logger.rs`): uma sessão = um par de arquivos em
+`$HOME/TurnRush/logs/` (`.log` legível + `.jsonl` estruturado), cabeçalho com
+ambiente completo (versão da engine, SO, kernel, arquitetura, host, CPUs,
+seed), rotação das 20 últimas sessões e API de custo mínimo (buffer + flush
+periódico — o Monte Carlo roda sem logging).
+
+- **Término limpo**: `session_end` com tempo total (ms, inteiro — contrato do
+  parser).
+- **Panic**: hook global grava `crash-YYYYMMDD-HHMMSS.log` com mensagem,
+  local e as últimas ~200 linhas da sessão.
+- **Sinais**: captura de SIGINT/SIGTERM/SIGHUP (self-pipe + thread monitora,
+  handler async-signal-safe) → `session_interrupted` + exit `128+sig`.
+- Eventos do jogo (`game_start`, `battle_start` com seed/mods, `battle_end`,
+  `reward_picked`, `game_end`) vão para os MESMOS arquivos — o log é o
+  roteiro completo da sessão.
+
+Detalhes, formatos e guia de reporte: [LOGS.md](LOGS.md).
+
+## DWC — fluxo de calibração
+
+```
+para cada iteração (fase 1):
+    simular os confrontos amostrados (threads = núcleos)
+    ajustar modificadores por composição (dano/vida, per-mille)
+fase 2: ajuste POR CONFRONTO direcionado a extremos (wr > 0.85 / < 0.15)
+verificação em seeds novos → relatório JSON + gate
+```
+
+- **1v1**: Monte Carlo de TODAS as composições (C(12,3) = 220 → 48.180
+  confrontos ordenados); gate: desvio médio ≤ 0.15 (medido 0.119).
+- **4v4**: amostragem documentada — composições puras de clã + confrontos
+  entre clãs + composições mistas (seed fixa); calibração 2 fases com alcance
+  reforçado (fase 1 ±550‰/±400‰; fase 2 clamp ±520‰/±320‰); gate completo
+  (150 sims): desvio médio **0.077 ≤ 0.15**. Pares categóricos restantes por
+  kit são listados no relatório como alvo de redesign de roster.
+- Relatório JSON (`--out`): stats por comp + matrizes de ajuste
+  (adj_dmg/adj_hp) — insumo direto do futuro servidor autoritativo.
+
+## Variância tática (v0.5)
+
+Batalhas 4v4 quase determinísticas quantizavam winrates em 0/0.5/1 e faziam a
+calibração oscilar. Duas correções simétricas e semeadas na engine:
+
+1. **Ordem de movimento amostrada** (`set_orders`/`quick_battle_mods_orders`):
+   o Monte Carlo sorteia a ordem 1º–4º por batalha — o winrate mede a média
+   sobre escolhas táticas; a IA do jogo sorteia a própria ordem (variância de
+   replay).
+2. **Jitter de timing de mystery** (1/4 de segurar por turno em `act`):
+   modela imperfeição humana de timing e dá gradiente contínuo aos winrates.
+
+## CI (GitHub Actions)
+
+**Build & Balance CI** (`build.yml`) — dispara em push/PR, `workflow_dispatch`
+e **cron noturno `0 7 * * *`** (04:00 em São Paulo; Monte Carlo completo):
+
+| Job | O que faz |
+|---|---|
+| `test` | `cargo test --workspace --release` (44 testes) |
+| `balance` | gate 1v1 (`--quick --gate`) + publica `balance-report.json` |
+| `balance-formation` | gate 4v4 (`--formation4v4 --formation-gate --formation-sims 150`) + publica relatório |
+| `build-linux` | build release do workspace + smoke `turnrush-game --check` + artifact |
+
+**Release** (`release.yml`) — dispara em tag `v*`: compila o jogo (glibc,
+wayland+x11) e o simulador (**musl estático**), roda smoke tests
+(`--check` + sim rápido), monta o AppDir e o AppImage (`appimagetool --comp
+zstd`), valida AppStream strict e publica na release com os 3 artefatos
+(AppImage + 2 tar.gz).
+
+## AppImage
+
+- O **jogo** (`turnrush-game`, Bevy/wgpu) é o executável principal — glibc
+  dinâmico, abre com clique duplo (`Exec=turnrush-game`, `Terminal=false`).
+- O **simulador** vai embutido como ferramenta secundária (musl estático) e o
+  `AppRun` roteia flags do sim.
+- AppDir completo: `AppRun`, `.desktop`, metainfo AppStream 1.0
+  (`io.github.Chrispsz.turnrush`), ícones hicolor 128/256, `.DirIcon`, LICENSE.
+- Smoke test do artefato antes do upload: jogo `--check` + sim `--quick`.
+- Compressão **zstd** (obrigatória no `appimagetool` continuous).
+
+## Cliente 2D jogável (`turnrush-game`)
+
+Bevy 0.20 com `default-features = false` + features mínimas de UI. Estados
+(`GameState`): `Menu → ComoJogar | Elenco → Draft → Battle → Reward → GameOver`.
+
+- **Raízes persistentes por estado**: cada tela é construída UMA vez no
+  `Startup` e mostrada/escondida por `Visibility` — sem despawn recursivo.
+- **Batalha = playback da engine**: `Formation4v4` roda uma vez com log; o
+  cliente consome os eventos via parser tolerante. HP, flashes por clã e log
+  são derivados dos eventos; velocidade 1×/6× via `FastForward`.
+- **Fonte embutida** (DejaVu Sans Mono, licença livre) substitui o subset
+  ASCII da fonte default — acentos pt-BR renderizam.
+- **Roster embutido** via `include_str!` do contrato v2 — o binário não
+  depende de arquivos externos.
+
+### Lições Bevy 0.20 (registradas para não repetir)
+
+1. `Camera2d` é OBRIGATÓRIO — UI sem câmera = janela em branco.
+2. `bevy_ui_render` é crate separado no 0.20 — sem ele a UI roda layout mas
+   NÃO DESENHA nada.
+3. Queries de `Text` devem ser disjuntas (marcadores) — sobreposição panica.
+4. `Node::default()` é Row — telas em coluna precisam `FlexDirection::Column`.
+5. `Button`/`Interaction` estão deprecados (removidos no futuro); migração para
+   picking + `Pressed` planejada.
+
+### Verificação visual sem interação (repro local + CI)
+
+- `--check`: headless (sem janela/wgpu) — roster + batalha real + parser.
+- `--shot <base>`: abre janela, navega Menu → Como Jogar → Elenco → Draft →
+  Batalha e salva 5 PNGs, com verificação de arquivo gravado.
+- Ambiente sem GPU: Xvfb + mesa-vulkan-drivers (lavapipe) + libxkbcommon-x11 —
+  comprovado no sandbox e no AppImage baixado da release.
 
 ## Netcode planejado (M2)
 
@@ -92,130 +215,11 @@ verificar em seeds novos → relatório + gate
 - Reconexão: replay a partir do último snapshot (determinismo garante
   sincronia exata).
 
-## Performance medida (sandbox 2 vCPU)
+## Performance medida
 
-- Batalha isolada: ~2–4 µs
-- Calibração rápida (60 sims × 7 passadas): ~95–105 s
-- Testes completos: < 1 s
-
-
----
-
-## Logs e Diagnóstico de Sessão (v0.3)
-
-Subsistema std-only (`logger.rs`, ~900 linhas): uma sessão = um par de arquivos
-em `$HOME/TurnRush/logs/` (`.log` legível + `.jsonl` estruturado), cabeçalho com
-ambiente completo (versão, SO, kernel, arq., host, CPUs, seed), hook de panic
-que grava `crash-*.log` com as últimas 200 linhas, e rotação das 20 últimas
-sessões. API de custo mínimo (buffer + flush periódico) — o Monte Carlo roda
-sem logging. Detalhes: [LOGS.md](LOGS.md).
-
-Racional: auditoria mínima (zero dependências ⇒ zero surface de leaks de
-terceiros) e diagnóstico reprodutível — mesma seed + log completo = replay
-determinístico de qualquer bug reportado.
-
-## Modo Formação 4v4 (v0.3, `formation.rs`)
-
-- **Formação 2×2** por lado; ordem de movimento 1º–4º configurável por time.
-- **Iniciativa justa**: moeda decide quem abre a 1ª rodada; alterna a cada rodada.
-- **Estados de combo** estilo Naruto Online: `launch` (arremesso) →
-  `knockback` (empurrão) → `knockdown` (derrubada); perseguições (chase)
-  disparam sobre estados frescos, **máx. 1 por unidade por rodada**
-  (`max_per_round`) e cadeia limitada a 12 elos (prova contra loops).
-- **Mystery** com chakra (início 20, +12/rodada, teto 100) e cooldown por
-  unidade. `ally_single`/`self` + `damage_pct` = **cura/escudo** em % do ATK.
-- **DoT** (Queimadura/Veneno): 10% do ATK/rodada, 2 rodadas, sem stack.
-- **Roster data-driven**: `Roster::from_json` (contrato v2, validado com erros
-  apontando o campo exato) → `game/data/roster/roster-v2.json` (16 personagens,
-  4 facções × 4 papéis) com fallback embutido de 12 personagens.
-- **Determinismo**: mesma seed ⇒ mesma batalha (testes cobrem).
-- **Calibração 4v4 (simulador)**: fase 1 por composição (±500‰/±350‰) + fase 2
-  **por confronto** direcionado a extremos (±280‰/±180‰, espelhos intocados).
-  Corrigiu um bug real: o índice de matchup era local do chunk multithread —
-  espelhos mostravam 1.000; com índice global, espelho = 0.502.
-- **Gate v0.3**: desvio médio por composição ≤ 0.25 (meta v0.4: 0.15 após
-  redesign dos hard counters entre facções — cadeia detectada:
-  tide→ember→verdant→storm→tide). Extremos listados automaticamente no
-  relatório como "alvo de redesign".
-
-### Performance medida
-
-- 44 testes (21 antigos + logger/roster/formation) em <0.1s (release).
-- Monte Carlo 4v4 completo (43 confrontos × 150 sims, 2 threads): ~13s.
-- Batalha 4v4 individual: ordem de microssegundos (200 batalhas < 2ms).
+- Batalha 4v4 individual: ordem de microssegundos (200 batalhas < 2 ms no
+  teste de regressão, build release).
+- Monte Carlo 4v4 completo (43 confrontos × 150 sims, 2 threads): ~13 s.
+- Batalha 1v1 isolada: ~2–4 µs (sandbox 2 vCPU).
+- Testes completos do workspace: < 1 s (release).
 - `cargo clippy --all-targets -- -D warnings`: limpo.
-
----
-
-## Cliente 2D jogável (v0.4–v0.5, `turnrush-game`)
-
-Bevy 0.20 com `default-features = false` + features mínimas de UI. Estados
-(`GameState`): `Menu → ComoJogar | Elenco → Draft → Battle → Reward → GameOver`.
-
-- **Raízes persistentes por estado**: cada tela é construída UMA vez no
-  `Startup` e mostrada/escondida por `Visibility` — sem despawn recursivo.
-- **Seleção por marcador** (`CardSelected`), nunca por cor.
-- **Batalha = playback da engine**: `Formation4v4` roda uma vez com log; o
-  cliente consome os eventos via parser tolerante (`battle_log.rs` — linhas
-  desconhecidas viram `Other` e continuam visíveis). HP, flashes por facção e
-  log são derivados dos eventos; velocidade 1×/6× via `FastForward`.
-- **Fonte embutida** (DejaVu Sans Mono, licença livre) substitui o subset
-  ASCII da fonte default — acentos pt-BR renderizam.
-- **Roster embutido** via `include_str!` do contrato v2 — o binário não
-  depende de arquivos externos.
-- **Logs de sessão**: o cliente usa o MESMO logger do engine
-  (`~/TurnRush/logs`) — `game_start`, `battle_start` (com seed e mods),
-  `battle_end`, `game_end`, screenshots.
-
-### Lições Bevy 0.20 (registradas para não repetir)
-
-1. `Camera2d` é OBRIGATÓRIO — UI sem câmera = janela em branco.
-2. `bevy_ui_render` é crate separado no 0.20 — sem ele a UI roda layout mas
-   NÃO DESENHA nada.
-3. Queries de `Text` devem ser disjuntas (marcadores) — sobreposição panica.
-4. `Node::default()` é Row — telas em coluna precisam `FlexDirection::Column`.
-5. `Button`/`Interaction` estão deprecados (removidos no futuro); migração para
-   picking + `Pressed` planejada para a v0.6.
-
-### Verificação visual sem interação (repro local + CI)
-
-- `--check`: headless (sem janela/wgpu) — roster + batalha real + parser.
-- `--shot <base>`: abre janela, navega Menu → Como Jogar → Elenco → Draft →
-  Batalha e salva 5 PNGs (`_menu`, `_como-jogar`, `_elenco`, `_draft`,
-  `_battle`), com verificação de arquivo gravado.
-- Ambiente sem GPU: Xvfb + mesa-vulkan-drivers (lavapipe) + libxkbcommon-x11
-  extraídos de .deb (sem sudo) + `VK_ICD_FILENAMES`/`LD_LIBRARY_PATH`.
-  Comprovado no sandbox e no AppImage baixado da release.
-
----
-
-## Variância tática e DWC 4v4 (v0.5 — o conserto dos contadores categóricos)
-
-**Problema real descoberto pela verificação v0.5**: batalhas 4v4 eram quase
-determinísticas (a única aleatoriedade era a moeda de abertura + o alvo
-aleatório da Tina) → winrates quantizavam em 0.000/0.500/1.000, a calibração
-oscilava (ajuste +95‰ derrubava o wr de 1.000 para 0.000) e confrontos entre
-facções puras ficavam categóricos (triângulo Ember>Verdant>Storm>Ember; Tide
-perdia de todos).
-
-**Correções na engine** (ambas simétricas e semeadas — determinismo mantido):
-
-1. **Ordem de movimento amostrada** — `Formation4v4::set_orders` + 
-   `quick_battle_mods_orders`: o Monte Carlo sorteia a ordem 1º–4º de cada
-   lado por batalha. O winrate passa a medir a **média sobre as escolhas
-   táticas** (a ordem é decisão do design — a UI de configuração é roadmap).
-   No jogo, a IA adversária sorteia a própria ordem por batalha (variância de
-   replay).
-2. **Jitter de timing de mystery** — 1/4 de chance de segurar a mystery por um
-   turno (`act`): modela imperfeição humana de timing, quebra sequências
-   ótimas fixas e dá gradiente contínuo aos winrates.
-
-**DWC 4v4 reforçado**: fase 1 com alcance ±550‰/±400‰; fase 2 (ajuste por
-confronto) com passos maiores e clamp ±520‰ dano / ±320‰ vida — alcance para
-neutralizar assimetrias estruturais entre arquétipos.
-
-**Resultado**: desvio médio **0.077 ≤ 0.15 → PASSOU** (gate completo, 150 sims; meta
-v0.4/v0.5 atingida; era 0.214). Espelhos 0.503. Confrontos moderados ficam
-intocados; pares ainda categóricos por kit (ex.: comps com dupla cura vs
-pressão de Ember) são listados como **alvo de redesign de roster (v0.6)** —
-o diagnóstico aponta os pares exatos a cada execução no CI e no cron noturno.

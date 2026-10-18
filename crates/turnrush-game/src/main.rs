@@ -13,6 +13,8 @@
 
 mod app;
 mod battle_log;
+mod scene;
+mod sprites;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();

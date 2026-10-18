@@ -264,7 +264,7 @@ impl Role {
     }
 }
 
-/// Estado de combo estilo Naruto Online (contrato v2).
+/// Estado de combo (contrato v2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ComboState {
     #[default]
@@ -686,7 +686,7 @@ pub const BUILTIN_ROSTER_JSON_V2: &str = r#"{
       "passive": { "name": "Pele de Pedra", "effect": "def+15" }
     },
     {
-      "id": "bruto", "name": "Bruto", "faction": "ember", "role": "striker",
+      "id": "bruto", "name": "Brute", "faction": "ember", "role": "striker",
       "hp": 115, "attack": 24, "defense": 26, "speed": 9,
       "mystery": { "name": "Golpe Esmagador", "chakra": 4, "cooldown": 3, "targets": "enemies_front", "damage_pct": 95, "applies_state": "launch", "effect": "" },
       "standard": { "name": "Golpe", "damage_pct": 90, "applies_state": "knockback" },
@@ -694,7 +694,7 @@ pub const BUILTIN_ROSTER_JSON_V2: &str = r#"{
       "passive": { "name": "Fúria Contida", "effect": "atk+10" }
     },
     {
-      "id": "sombra", "name": "Sombra", "faction": "tide", "role": "striker",
+      "id": "sombra", "name": "Shade", "faction": "tide", "role": "striker",
       "hp": 85, "attack": 26, "defense": 14, "speed": 15,
       "mystery": { "name": "Execução", "chakra": 6, "cooldown": 4, "targets": "enemies_front", "damage_pct": 130, "applies_state": "launch", "effect": "" },
       "standard": { "name": "Adaga", "damage_pct": 90, "applies_state": "none" },
@@ -702,7 +702,7 @@ pub const BUILTIN_ROSTER_JSON_V2: &str = r#"{
       "passive": { "name": "Passo Sombrio", "effect": "spd+3" }
     },
     {
-      "id": "arqueira", "name": "Arqueira", "faction": "verdant", "role": "striker",
+      "id": "arqueira", "name": "Archer", "faction": "verdant", "role": "striker",
       "hp": 92, "attack": 26, "defense": 20, "speed": 12,
       "mystery": { "name": "Chuva de Flechas", "chakra": 6, "cooldown": 4, "targets": "enemies_all", "damage_pct": 70, "applies_state": "launch", "effect": "" },
       "standard": { "name": "Flecha", "damage_pct": 90, "applies_state": "none" },
@@ -710,7 +710,7 @@ pub const BUILTIN_ROSTER_JSON_V2: &str = r#"{
       "passive": { "name": "Mira Estável", "effect": "spd+2" }
     },
     {
-      "id": "piromante", "name": "Piromante", "faction": "ember", "role": "controller",
+      "id": "piromante", "name": "Pyromancer", "faction": "ember", "role": "controller",
       "hp": 88, "attack": 28, "defense": 15, "speed": 10,
       "mystery": { "name": "Deflagrar", "chakra": 7, "cooldown": 5, "targets": "enemies_all", "damage_pct": 90, "applies_state": "none", "effect": "" },
       "standard": { "name": "Faísca", "damage_pct": 90, "applies_state": "none" },
@@ -718,7 +718,7 @@ pub const BUILTIN_ROSTER_JSON_V2: &str = r#"{
       "passive": { "name": "Sobrecarga", "effect": "atk+8" }
     },
     {
-      "id": "oraculo", "name": "Oráculo", "faction": "verdant", "role": "support",
+      "id": "oraculo", "name": "Oracle", "faction": "verdant", "role": "support",
       "hp": 95, "attack": 19, "defense": 26, "speed": 10,
       "mystery": { "name": "Círculo Sagrado", "chakra": 6, "cooldown": 4, "targets": "ally_single", "damage_pct": 0, "applies_state": "none", "effect": "heal=30;shield=12" },
       "standard": { "name": "Cajado", "damage_pct": 90, "applies_state": "none" },
@@ -726,7 +726,7 @@ pub const BUILTIN_ROSTER_JSON_V2: &str = r#"{
       "passive": { "name": "Fé Serena", "effect": "chakra+1" }
     },
     {
-      "id": "comandante", "name": "Comandante", "faction": "storm", "role": "support",
+      "id": "comandante", "name": "Commander", "faction": "storm", "role": "support",
       "hp": 105, "attack": 22, "defense": 26, "speed": 10,
       "mystery": { "name": "Ordem de Ataque", "chakra": 4, "cooldown": 3, "targets": "ally_single", "damage_pct": 0, "applies_state": "none", "effect": "buffatk=35;turns=2" },
       "standard": { "name": "Sabre", "damage_pct": 90, "applies_state": "none" },
@@ -734,7 +734,7 @@ pub const BUILTIN_ROSTER_JSON_V2: &str = r#"{
       "passive": { "name": "Disciplina", "effect": "def+8" }
     },
     {
-      "id": "feiticeira", "name": "Feiticeira", "faction": "tide", "role": "controller",
+      "id": "feiticeira", "name": "Sorceress", "faction": "tide", "role": "controller",
       "hp": 90, "attack": 23, "defense": 20, "speed": 10,
       "mystery": { "name": "Vórtice", "chakra": 6, "cooldown": 4, "targets": "enemies_all", "damage_pct": 55, "applies_state": "knockback", "effect": "debuffatk=15;turns=2" },
       "standard": { "name": "Hex", "damage_pct": 90, "applies_state": "none" },
@@ -742,7 +742,7 @@ pub const BUILTIN_ROSTER_JSON_V2: &str = r#"{
       "passive": { "name": "Má Vontade", "effect": "atk+5" }
     },
     {
-      "id": "duelista", "name": "Duelista", "faction": "storm", "role": "striker",
+      "id": "duelista", "name": "Duelist", "faction": "storm", "role": "striker",
       "hp": 90, "attack": 25, "defense": 20, "speed": 13,
       "mystery": { "name": "Postura Precisa", "chakra": 2, "cooldown": 3, "targets": "self", "damage_pct": 0, "applies_state": "none", "effect": "buffatk=35;turns=1" },
       "standard": { "name": "Estocada", "damage_pct": 90, "applies_state": "none" },
@@ -750,7 +750,7 @@ pub const BUILTIN_ROSTER_JSON_V2: &str = r#"{
       "passive": { "name": "Leitura", "effect": "spd+2" }
     },
     {
-      "id": "monge", "name": "Monge", "faction": "verdant", "role": "striker",
+      "id": "monge", "name": "Monk", "faction": "verdant", "role": "striker",
       "hp": 100, "attack": 24, "defense": 20, "speed": 11,
       "mystery": { "name": "Fluxo Interior", "chakra": 2, "cooldown": 3, "targets": "ally_single", "damage_pct": 0, "applies_state": "none", "effect": "heal=20" },
       "standard": { "name": "Soco", "damage_pct": 90, "applies_state": "none" },
@@ -758,7 +758,7 @@ pub const BUILTIN_ROSTER_JSON_V2: &str = r#"{
       "passive": { "name": "Chi Interno", "effect": "hp+8" }
     },
     {
-      "id": "necromante", "name": "Necromante", "faction": "tide", "role": "controller",
+      "id": "necromante", "name": "Necromancer", "faction": "tide", "role": "controller",
       "hp": 90, "attack": 26, "defense": 20, "speed": 10,
       "mystery": { "name": "Enxame de Corvos", "chakra": 6, "cooldown": 4, "targets": "enemies_all", "damage_pct": 65, "applies_state": "launch", "effect": "" },
       "standard": { "name": "Toque Vampírico", "damage_pct": 90, "applies_state": "none" },
@@ -766,7 +766,7 @@ pub const BUILTIN_ROSTER_JSON_V2: &str = r#"{
       "passive": { "name": "Colheita", "effect": "atk+5" }
     },
     {
-      "id": "guardia", "name": "Guardiã", "faction": "storm", "role": "guardian",
+      "id": "guardia", "name": "Guardian", "faction": "storm", "role": "guardian",
       "hp": 125, "attack": 23, "defense": 30, "speed": 10,
       "mystery": { "name": "Julgamento", "chakra": 4, "cooldown": 3, "targets": "enemies_front", "damage_pct": 90, "applies_state": "launch", "effect": "shield=15" },
       "standard": { "name": "Martelo", "damage_pct": 90, "applies_state": "none" },

@@ -4,7 +4,7 @@
   <metadata_license>MIT</metadata_license>
   <project_license>MIT</project_license>
   <name>TurnRush</name>
-  <summary>Roguelike tático 2D: auto-batalhas rápidas com cadeias de combo estilo Naruto Online</summary>
+  <summary>Roguelike tático 2D: batalhas rápidas por turnos com cadeias de combo</summary>
   <description>
     <p>TurnRush é um roguelike acelerado: monte sua formação de 4 personagens,
     assista batalhas 4v4 com cadeias de perseguição (chase), escolha

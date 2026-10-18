@@ -3,7 +3,7 @@
   "characters": [
     {
       "id": "ignia",
-      "name": "Ígnia Brasa-Viva",
+      "name": "Ignia Emberbright",
       "faction": "ember",
       "role": "striker",
       "hp": 920,
@@ -38,7 +38,7 @@
     },
     {
       "id": "orson",
-      "name": "Orson Muralha-Fundida",
+      "name": "Orson Moltenwall",
       "faction": "ember",
       "role": "guardian",
       "hp": 1140,
@@ -73,7 +73,7 @@
     },
     {
       "id": "amara",
-      "name": "Amara Chama-Doce",
+      "name": "Amara Sweetflame",
       "faction": "ember",
       "role": "support",
       "hp": 980,
@@ -108,7 +108,7 @@
     },
     {
       "id": "nimbo",
-      "name": "Nimbo Véu-de-Fumaça",
+      "name": "Nimbo Smokeveil",
       "faction": "ember",
       "role": "controller",
       "hp": 900,
@@ -143,7 +143,7 @@
     },
     {
       "id": "nereo",
-      "name": "Nereo Lâmina-de-Sal",
+      "name": "Nereo Saltblade",
       "faction": "tide",
       "role": "striker",
       "hp": 950,
@@ -178,7 +178,7 @@
     },
     {
       "id": "dalva",
-      "name": "Dalva Recife",
+      "name": "Dalva Reefwarden",
       "faction": "tide",
       "role": "guardian",
       "hp": 1150,
@@ -213,7 +213,7 @@
     },
     {
       "id": "mel",
-      "name": "Mel Maré-Mãe",
+      "name": "Mel Tidemother",
       "faction": "tide",
       "role": "support",
       "hp": 1000,
@@ -248,7 +248,7 @@
     },
     {
       "id": "ligeia",
-      "name": "Ligeia Névoa-Fria",
+      "name": "Ligeia Coldmist",
       "faction": "tide",
       "role": "controller",
       "hp": 890,
@@ -283,7 +283,7 @@
     },
     {
       "id": "tina",
-      "name": "Tina Espinho-Gêmeo",
+      "name": "Tina Twinthorn",
       "faction": "verdant",
       "role": "striker",
       "hp": 930,
@@ -318,7 +318,7 @@
     },
     {
       "id": "aro",
-      "name": "Aro Cascão",
+      "name": "Aro Barkshell",
       "faction": "verdant",
       "role": "guardian",
       "hp": 1150,
@@ -353,7 +353,7 @@
     },
     {
       "id": "yara",
-      "name": "Yara Seiva-Viva",
+      "name": "Yara Lifesap",
       "faction": "verdant",
       "role": "support",
       "hp": 1020,
@@ -388,7 +388,7 @@
     },
     {
       "id": "ivo",
-      "name": "Ívo Corda-Fina",
+      "name": "Ivo Finewire",
       "faction": "verdant",
       "role": "controller",
       "hp": 880,
@@ -423,7 +423,7 @@
     },
     {
       "id": "reia",
-      "name": "Reia Passo-Trovão",
+      "name": "Reia Thunderstep",
       "faction": "storm",
       "role": "striker",
       "hp": 930,
@@ -458,7 +458,7 @@
     },
     {
       "id": "aki",
-      "name": "Aki Contra-Corte",
+      "name": "Aki Countercut",
       "faction": "storm",
       "role": "guardian",
       "hp": 1100,
@@ -493,7 +493,7 @@
     },
     {
       "id": "alisio",
-      "name": "Alísio Sopro-Ligeiro",
+      "name": "Alísio Lightgale",
       "faction": "storm",
       "role": "support",
       "hp": 980,
@@ -528,7 +528,7 @@
     },
     {
       "id": "volta",
-      "name": "Volta Ciclone",
+      "name": "Volta Cyclone",
       "faction": "storm",
       "role": "controller",
       "hp": 900,
