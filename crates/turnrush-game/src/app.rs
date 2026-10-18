@@ -2116,7 +2116,7 @@ const fn pacing(ev: &BattleEvent, ff: bool) -> f32 {
         _ => 0.22,
     };
     if ff {
-        base / 3.0
+        base / 2.0 // SPACE = 2× (spec E.10)
     } else {
         base
     }
@@ -2832,9 +2832,9 @@ fn speed_click(
             ff.0 = !ff.0;
             if let Ok(mut t) = label.single_mut() {
                 *t = if ff.0 {
-                    Text::new("Acelerando 6× ▶▶")
+                    Text::new("2× ▶▶ [ESPAÇO]")
                 } else {
-                    Text::new("Acelerar ▶")
+                    Text::new("1× ▶ [ESPAÇO]")
                 };
             }
             turnrush_core::logger::kv(
@@ -2843,7 +2843,7 @@ fn speed_click(
                 "velocidade do playback alterada",
                 &[(
                     "acelerado",
-                    turnrush_core::logger::V::S(if ff.0 { "6x" } else { "1x" }),
+                    turnrush_core::logger::V::S(if ff.0 { "2x" } else { "1x" }),
                 )],
             );
         }
