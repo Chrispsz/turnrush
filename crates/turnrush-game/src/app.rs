@@ -46,10 +46,13 @@ use bevy::window::WindowResolution;
 use std::collections::HashMap;
 
 use turnrush_core::data::{ComboState, Roster, RosterChar, TargetSpec};
-use turnrush_core::formation::{ActionChoice, Formation4v4, FormationMods, Outcome};
+use turnrush_core::formation::{Formation4v4, FormationMods, Outcome};
+use turnrush_core::interactive::{ActionKind, BattleEvent, ChosenAction, SideEdge};
 use turnrush_core::rng::Rng;
 
-use crate::battle_log::{parse_all, parse_line, EvKind, ParsedEvent};
+use crate::controller::{BattleController, CtlPhase};
+
+use crate::battle_log::{parse_all, EvKind, ParsedEvent};
 use crate::scene;
 use crate::scene::{despawn_battle_scene, spawn_battle_scene, BattleScene, FxQueue, VisEvent};
 use crate::sprites::SpriteAssets;
@@ -100,6 +103,17 @@ pub struct RunRes {
     pub wins: usize,
     pub rounds_total: u64,
     pub chains_total: u64,
+    /// Cartas da run (roguelike v0.7): estado + alvos das cartas de unidade
+    /// (slot, índice da carta no pool).
+    pub cards: turnrush_core::rewards::RunState,
+    pub card_targets: Vec<(usize, usize)>,
+}
+
+impl RunRes {
+    /// Vantagem acumulada das cartas para o lado do jogador.
+    pub fn cards_edge(&self) -> SideEdge {
+        self.cards.edge(&self.card_targets)
+    }
 }
 
 /// Playback da batalha corrente.
@@ -118,6 +132,8 @@ pub struct PlaybackRes {
     pub taken: [i64; 8],
     pub healed: [i64; 8],
     pub alive: [bool; 8],
+    /// Fluxo corrente por unidade (modo manual v0.7; índice = lado*4+slot).
+    pub fluxo: [i32; 8],
 }
 
 impl PlaybackRes {
@@ -253,6 +269,10 @@ pub struct SpeedLabel;
 #[derive(Resource, Default)]
 pub struct FastForward(pub bool);
 
+/// Preferência CLI: `--playback` mantém o modo legado (v0.6) — default manual.
+#[derive(Resource, Default, Clone, Copy)]
+pub struct PlaybackPref(pub bool);
+
 // ────────────────────────────────────────────────────────────────────────────
 // Batalha manual (v0.6): engine por passos com decisão do jogador
 // ────────────────────────────────────────────────────────────────────────────
@@ -277,33 +297,46 @@ fn is_manual(mode: Res<BattleMode>) -> bool {
     *mode == BattleMode::Manual
 }
 
-/// Estado da batalha manual: engine vivo + fila de eventos por exibir.
+/// Estado da batalha manual (v0.7): controlador da engine interativa.
 #[derive(Resource, Default)]
 pub struct ManualRes {
-    /// Engine da batalha corrente (lado 0 manual). `None` fora de batalha.
-    pub f: Option<Formation4v4>,
-    /// Índice do próximo evento cru a converter em [`ParsedEvent`].
-    pub ev_cursor: usize,
-    /// Eventos parseados aguardando exibição (aplicados 1 por tick).
-    pub parsed: Vec<ParsedEvent>,
-    /// Botão Auto: a IA do engine resolve as decisões do jogador.
+    /// Controlador da batalha corrente (lado 0 = jogador). `None` fora dela.
+    pub ctl: Option<BattleController>,
+    /// Botão Auto: a IA simétrica resolve as decisões do jogador.
     pub auto: bool,
 }
 
 /// Decisão pendente exibida no painel manual (dados já resolvidos p/ UI).
 #[derive(Resource, Default)]
 pub struct PendingUi {
+    /// Painel ativo (vez do jogador).
     pub active: bool,
+    /// Janela de perseguição (ENTER confirma / ESC recusa).
+    pub chase: bool,
+    /// Aguardando alvo (após escolher ação que precisa de um).
     pub choosing_target: bool,
+    /// Alvo é inimigo (false = aliado, para Skill/Mystery de cura).
+    pub target_enemy: bool,
+    /// Ação selecionada aguardando alvo.
+    pub selected: Option<ActionKind>,
+    /// Nome da unidade na vez.
     pub name: String,
-    pub chakra: i32,
-    pub mystery_ready: bool,
-    pub mystery_cost: i32,
-    pub mystery_name: String,
-    pub mystery_desc: String,
-    pub standard_name: String,
+    /// HP atual/máximo e fluxo da unidade na vez.
+    pub hp: i32,
+    pub hp_max: i32,
+    pub fluxo: i32,
+    /// Botões [1]..[4]: (rótulo, custo, disponível, cd/unlock text).
+    pub actions: [(String, i32, bool, String); 4],
+    /// Linha de pré-visualização (dano/cura previstos).
+    pub preview: String,
     /// (nome, hp%, vivo) por slot inimigo.
     pub targets: [(String, i32, bool); 4],
+    /// (nome, hp%, vivo) por slot aliado.
+    pub allies: [(String, i32, bool); 4],
+    /// Slots aliados elegíveis na janela de chase.
+    pub chasers: Vec<usize>,
+    /// Texto da timeline da rodada (ordem visível).
+    pub timeline: String,
 }
 
 // ── Marcadores do painel de decisão ──
@@ -327,18 +360,36 @@ pub struct DecBtn(pub DecKind);
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum DecKind {
-    Mystery,
     Standard,
+    Skill,
+    Mystery,
+    Interrupt,
     Auto,
 }
 
-/// Botão de alvo inimigo (slot 0..4).
+/// Botão de alvo (slot 0..4; inimigo ou aliado conforme a escolha).
 #[derive(Component, Clone, Copy, PartialEq)]
 pub struct DecTargetBtn(pub usize);
 
 /// Botão “Auto-alvo” (regra da IA: primeiro inimigo vivo).
 #[derive(Component)]
 pub struct DecTargetAutoBtn;
+
+/// Botão de reroll da oferta de cartas (Reward, v0.7).
+#[derive(Component)]
+pub struct RerollBtn;
+
+/// Linha de pré-visualização da ação.
+#[derive(Component)]
+pub struct DecPreviewText;
+
+/// Faixa de timeline da rodada (ordem visível).
+#[derive(Component)]
+pub struct TimelineText;
+
+/// Faixa de perseguição (janela ativa).
+#[derive(Component)]
+pub struct ChaseText;
 
 /// Conteúdo da tela "Como Jogar" — regras FIÉIS ao engine (formation.rs).
 const AJUDA: [(&str, &str); 7] = [
@@ -516,7 +567,7 @@ fn faction_color(f: &str) -> Color {
 // App
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub fn run(shot: Option<ShotOpts>) {
+pub fn run(shot: Option<ShotOpts>, playback: bool) {
     // Logs de sessão (o "script de tudo") — o mesmo diretório do engine.
     let seed = turnrush_core::logger::unix_nanos() as u64;
     let _ = turnrush_core::logger::init(seed);
@@ -551,6 +602,7 @@ pub fn run(shot: Option<ShotOpts>) {
         .init_resource::<FastForward>()
         .init_resource::<BattleMode>()
         .init_resource::<ManualRes>()
+        .insert_resource(PlaybackPref(playback))
         .init_resource::<PendingUi>()
         .init_resource::<FxQueue>()
         .init_resource::<BattleScene>()
@@ -596,6 +648,7 @@ pub fn run(shot: Option<ShotOpts>) {
                 sync_decision_panel,
                 decision_click,
                 target_click,
+                battle_keys,
                 scene::scene_animate,
                 scene::scene_fx,
                 scene::fx_motion,
@@ -709,6 +762,8 @@ fn shot_tick(
     mut next: ResMut<NextState<GameState>>,
     mut run: ResMut<RunRes>,
     mut pb: ResMut<PlaybackRes>,
+    mut manual: ResMut<ManualRes>,
+    pref: Res<PlaybackPref>,
     roots: Query<(&StateRoot, &Visibility, &InheritedVisibility, &ViewVisibility)>,
     ui_nodes: Query<(), With<Node>>,
     cameras: Query<(), With<Camera2d>>,
@@ -783,9 +838,11 @@ fn shot_tick(
             // formação fixa: exercita build_battle + battle_enter sem interação
             run.team = vec![0, 1, 2, 3];
             run.enemy = vec![4, 5, 6, 7];
-            build_battle(&mut run, &mut pb, &mut cmds);
+            // v0.7: o shot da batalha mostra a UI de comando manual (painel
+            // de ação com prévia) — aguarda os eventos abrirem a 1ª decisão.
+            construir_batalha(pref.0, &mut run, &mut pb, &mut manual, &mut cmds);
             next.set(GameState::Battle);
-            st.timer = 2.6;
+            st.timer = 7.0;
             st.phase = ShotPhase::Batalha;
         }
         ShotPhase::Batalha if st.timer <= 0.0 => {
@@ -823,6 +880,8 @@ fn new_run() -> RunRes {
         wins: 0,
         rounds_total: 0,
         chains_total: 0,
+        cards: turnrush_core::rewards::RunState::new(),
+        card_targets: Vec::new(),
     }
 }
 
@@ -848,6 +907,7 @@ fn new_playback_placeholder() -> PlaybackRes {
         taken: [0; 8],
         healed: [0; 8],
         alive: [true; 8],
+        fluxo: [0; 8],
     }
 }
 
@@ -1164,6 +1224,18 @@ fn setup_roots(tex: Res<SpriteAssets>, mut cmds: Commands) {
                         ..default()
                     },
                 ));
+                p.spawn((
+                    TimelineText,
+                    Text::new(""),
+                    TextFont { font_size: px(12.0), ..default() },
+                    TextColor(TXT_DIM),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Percent(24.0),
+                        top: Val::Px(12.0),
+                        ..default()
+                    },
+                ));
             });
             // campo aberto — a cena 2D (scene.rs) desenha a batalha no mundo
             p.spawn((Node { width: Val::Percent(100.0), height: Val::Percent(72.0), ..default() },));
@@ -1183,9 +1255,9 @@ fn setup_roots(tex: Res<SpriteAssets>, mut cmds: Commands) {
                 lp.spawn((BattleLogText, Text::new(""), TextFont { font_size: FontSize::Px(14.0), ..default() }, TextColor(TXT_DIM)));
             });
 
-            // ── Painel de decisão manual (v0.6 — modo Jogar) ──
-            // Overlay absoluto na base: aparece só quando uma decisão do
-            // jogador está pendente (cobre parte do log durante a escolha).
+            // ── Painel de comando manual (v0.7) ──
+            // Vez do jogador: 4 ações [1]-[4], prévia EXATA, fila de alvos
+            // e janela de perseguição (ENTER/ESC).
             p.spawn((
                 DecPanel,
                 Node {
@@ -1210,63 +1282,55 @@ fn setup_roots(tex: Res<SpriteAssets>, mut cmds: Commands) {
                     TextFont { font_size: px(16.0), ..default() },
                     TextColor(AMBER),
                 ));
+                dp.spawn((
+                    DecPreviewText,
+                    Text::new(""),
+                    TextFont { font_size: px(13.0), ..default() },
+                    TextColor(GOOD),
+                ));
                 dp.spawn((Node { column_gap: Val::Px(8.0), ..default() },)).with_children(|row| {
-                    let ml = row
-                        .spawn((
-                            DecMysteryLabel,
-                            Text::new("Mystery"),
-                            TextFont { font_size: px(14.0), ..default() },
-                            TextColor(TXT),
+                    let mkbtn = |row: &mut ChildSpawnerCommands, kind: DecKind, width: f32| {
+                        let lbl = row
+                            .spawn((
+                                Text::new("—"),
+                                TextFont { font_size: px(13.0), ..default() },
+                                TextColor(TXT),
+                            ))
+                            .id();
+                        let cor = match kind {
+                            DecKind::Mystery => AMBER,
+                            DecKind::Skill => GOOD,
+                            _ => TXT_DIM,
+                        };
+                        row.spawn((
+                            Interaction::default(),
+                            DecBtn(kind),
+                            Node {
+                                width: Val::Px(width),
+                                height: Val::Px(40.0),
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                border: UiRect::all(Val::Px(1.5)),
+                                border_radius: BorderRadius::all(Val::Px(8.0)),
+                                ..default()
+                            },
+                            BackgroundColor(PANEL),
+                            BorderColor::all(cor),
                         ))
-                        .id();
-                    row.spawn((
-                        Interaction::default(),
-                        DecBtn(DecKind::Mystery),
-                        Node {
-                            width: Val::Px(330.0),
-                            height: Val::Px(40.0),
-                            align_items: AlignItems::Center,
-                            justify_content: JustifyContent::Center,
-                            border: UiRect::all(Val::Px(1.5)),
-                            border_radius: BorderRadius::all(Val::Px(8.0)),
-                            ..default()
-                        },
-                        BackgroundColor(PANEL),
-                        BorderColor::all(AMBER),
-                    ))
-                    .add_child(ml);
-                    let sl = row
-                        .spawn((
-                            DecStandardLabel,
-                            Text::new("Padrão"),
-                            TextFont { font_size: px(14.0), ..default() },
-                            TextColor(TXT),
-                        ))
-                        .id();
-                    row.spawn((
-                        Interaction::default(),
-                        DecBtn(DecKind::Standard),
-                        Node {
-                            width: Val::Px(280.0),
-                            height: Val::Px(40.0),
-                            align_items: AlignItems::Center,
-                            justify_content: JustifyContent::Center,
-                            border: UiRect::all(Val::Px(1.5)),
-                            border_radius: BorderRadius::all(Val::Px(8.0)),
-                            ..default()
-                        },
-                        BackgroundColor(PANEL),
-                        BorderColor::all(TXT_DIM),
-                    ))
-                    .add_child(sl);
+                        .add_child(lbl);
+                    };
+                    mkbtn(row, DecKind::Standard, 240.0);
+                    mkbtn(row, DecKind::Skill, 320.0);
+                    mkbtn(row, DecKind::Mystery, 330.0);
+                    mkbtn(row, DecKind::Interrupt, 200.0);
                     let al = row
-                        .spawn((Text::new("Auto ▶"), TextFont { font_size: px(14.0), ..default() }, TextColor(TXT_DIM)))
+                        .spawn((Text::new("Auto [Z]"), TextFont { font_size: px(13.0), ..default() }, TextColor(TXT_DIM)))
                         .id();
                     row.spawn((
                         Interaction::default(),
                         DecBtn(DecKind::Auto),
                         Node {
-                            width: Val::Px(90.0),
+                            width: Val::Px(96.0),
                             height: Val::Px(40.0),
                             align_items: AlignItems::Center,
                             justify_content: JustifyContent::Center,
@@ -1279,6 +1343,12 @@ fn setup_roots(tex: Res<SpriteAssets>, mut cmds: Commands) {
                     ))
                     .add_child(al);
                 });
+                dp.spawn((
+                    ChaseText,
+                    Text::new(""),
+                    TextFont { font_size: px(15.0), ..default() },
+                    TextColor(Color::srgb(1.0, 0.82, 0.25)),
+                ));
                 dp.spawn((
                     DecTargetRow,
                     Node { column_gap: Val::Px(8.0), ..default() },
@@ -1312,13 +1382,13 @@ fn setup_roots(tex: Res<SpriteAssets>, mut cmds: Commands) {
                         .add_child(tl);
                     }
                     let ta = tr
-                        .spawn((Text::new("Auto-alvo"), TextFont { font_size: px(12.0), ..default() }, TextColor(TXT_DIM)))
+                        .spawn((Text::new("Auto-alvo [ENTER]"), TextFont { font_size: px(12.0), ..default() }, TextColor(TXT_DIM)))
                         .id();
                     tr.spawn((
                         Interaction::default(),
                         DecTargetAutoBtn,
                         Node {
-                            width: Val::Px(110.0),
+                            width: Val::Px(140.0),
                             height: Val::Px(34.0),
                             align_items: AlignItems::Center,
                             justify_content: JustifyContent::Center,
@@ -1530,10 +1600,12 @@ fn draft_card_click(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // assinatura de sistema Bevy
 fn draft_confirm(
     mut cmds: Commands,
     mut run: ResMut<RunRes>,
     mut playback: ResMut<PlaybackRes>,
+    pref: Res<PlaybackPref>,
     mut manual: ResMut<ManualRes>,
     mut pending: ResMut<PendingUi>,
     cards: Query<&DraftCard, With<CardSelected>>,
@@ -1550,7 +1622,7 @@ fn draft_confirm(
     run.enemy = rest.into_iter().take(4).collect();
     pending.active = false;
     pending.choosing_target = false;
-    build_manual(&mut run, &mut playback, &mut manual, &mut cmds);
+    construir_batalha(pref.0, &mut run, &mut playback, &mut manual, &mut cmds);
     state.set(GameState::Battle);
 }
 
@@ -1620,22 +1692,38 @@ fn rodar_batalha_auto(
     (outcome, chains, rounds, events, seed)
 }
 
-/// Batalha MANUAL: engine vivo por passos, lado 0 = jogador.
+/// Constrói a batalha conforme a preferência CLI: manual = padrão (v0.7);
+/// `--playback` = modo legado (v0.6) preservado para curiosos e CI visual.
+fn construir_batalha(
+    pref: bool,
+    run: &mut RunRes,
+    pb: &mut PlaybackRes,
+    manual: &mut ManualRes,
+    cmds: &mut Commands,
+) {
+    if pref {
+        build_battle(run, pb, cmds);
+        cmds.insert_resource(BattleMode::Playback);
+    } else {
+        build_manual(run, pb, manual, cmds);
+    }
+}
+
+/// Batalha MANUAL (v0.7): engine interativa via controlador, lado 0 = jogador.
 fn build_manual(run: &mut RunRes, pb: &mut PlaybackRes, manual: &mut ManualRes, cmds: &mut Commands) {
     let (a, b) = times_da_run(run);
     let seed = run.rng.next_u64();
-    let enemy_mods = FormationMods {
-        dmg_permille: 1000 + (run.wins as i32) * 110,
-        hp_permille: 1000 + (run.wins as i32) * 70,
+    // Escala do inimigo por vitória (+110‰ dano / +70‰ hp) — a 3ª luta é BOSS.
+    let boss = run.wins >= VICTORIES_TO_WIN - 1;
+    let edge_b = SideEdge {
+        dmg_scale_permille: 1000 + (run.wins as i32) * 110 + if boss { 150 } else { 0 },
+        hp_scale_permille: 1000 + (run.wins as i32) * 70 + if boss { 100 } else { 0 },
+        ..SideEdge::default()
     };
-    let mut f = Formation4v4::new_with_mods(&run.roster, a, b, seed, run.mods, enemy_mods);
-    // IA adversária: ordem sorteada; a do jogador segue a do draft (slots).
-    let mut ordem_ia = [0usize, 1, 2, 3];
-    run.rng.shuffle(&mut ordem_ia);
-    f.set_orders([0, 1, 2, 3], ordem_ia);
-    f.set_manual_side(Some(0));
-    f.set_log(true);
-    *manual = ManualRes { f: Some(f), ev_cursor: 0, parsed: Vec::new(), auto: false };
+    // Cartas da run acumuladas no lado do jogador.
+    let edge_a = run.cards_edge();
+    let ctl = BattleController::new(&run.roster, a, b, seed, edge_a, edge_b, manual.auto);
+    *manual = ManualRes { ctl: Some(ctl), auto: manual.auto };
     cmds.insert_resource(BattleMode::Manual);
 
     let nomes = |comp: &[usize; 4]| -> String {
@@ -1644,12 +1732,12 @@ fn build_manual(run: &mut RunRes, pb: &mut PlaybackRes, manual: &mut ManualRes, 
     turnrush_core::logger::kv(
         turnrush_core::logger::Level::Info,
         "battle_start",
-        "batalha 4v4 gerada (manual)",
+        "batalha 4v4 interativa gerada (manual)",
         &[
             ("time_a", turnrush_core::logger::V::S(&nomes(&a))),
             ("time_b", turnrush_core::logger::V::S(&nomes(&b))),
             ("seed", turnrush_core::logger::V::U(seed)),
-            ("mods_a", turnrush_core::logger::V::S(&format!("{}/{}", run.mods.dmg_permille, run.mods.hp_permille))),
+            ("boss", turnrush_core::logger::V::S(if boss { "sim" } else { "não" })),
         ],
     );
 
@@ -1680,8 +1768,17 @@ fn preencher_playback_base(run: &RunRes, pb: &mut PlaybackRes, a: &[usize; 4], b
         taken: [0; 8],
         healed: [0; 8],
         alive: [true; 8],
+        fluxo: [0; 8],
     };
 }
+
+/// Query do contador de cadeias (alias anti type_complexity).
+type ChainsTextQuery<'w, 's> = Query<
+    'w,
+    's,
+    &'static mut Text,
+    (With<ChainsText>, Without<BattleHeader>, Without<BattleLogText>, Without<SpeedLabel>),
+>;
 
 /// Query do log de batalha — alias para satisfazer o clippy (type_complexity).
 type BattleLogTextQuery<'w, 's> = Query<
@@ -1708,7 +1805,8 @@ type BattleWinsQuery<'w, 's> = Query<
 
 fn battle_enter(run: Res<RunRes>, mut header: BattleHdrQuery, mut log: BattleLogTextQuery, mut wins: BattleWinsQuery) {
     if let Ok(mut t) = header.single_mut() {
-        *t = Text::new("Batalha — rodada 1");
+        let boss = run.wins >= VICTORIES_TO_WIN - 1;
+        *t = Text::new(if boss { "BOSS — rodada 1" } else { "Batalha — rodada 1" });
     }
     if let Ok(mut t) = log.single_mut() {
         *t = Text::new("");
@@ -1867,24 +1965,45 @@ fn process_event(
     }
 }
 
-/// Tick da batalha MANUAL: drena eventos com o mesmo pacing do playback,
-/// pausa quando uma decisão do jogador é necessária e avança a engine um
-/// passo atômico por vez ([`Formation4v4::advance_one`]).
+/// Ritmo de playback por classe de evento (spec E.10: rápido sem ser
+/// apressado — uma volta de unidade não passa de ~2s de animação).
+const fn pacing(ev: &BattleEvent, ff: bool) -> f32 {
+    let base = match ev {
+        BattleEvent::RoundStart { .. } => 0.8,
+        BattleEvent::RoundEnd { .. } => 0.35,
+        BattleEvent::ActionDeclared { kind, .. } => match kind {
+            ActionKind::Standard => 0.30,
+            ActionKind::Skill => 0.50,
+            ActionKind::Mystery => 0.80,
+            ActionKind::Interrupt => 0.45,
+        },
+        BattleEvent::ChaseResolved { .. } => 0.40,
+        BattleEvent::ChaseOffered { .. } => 0.0,
+        BattleEvent::BattleOver { .. } => 1.1,
+        _ => 0.22,
+    };
+    if ff {
+        base / 3.0
+    } else {
+        base
+    }
+}
+
+/// Tick da batalha MANUAL (v0.7): reproduz 1 [`BattleEvent`] por tick,
+/// pausa na vez do jogador (painel de comando) e conduz a IA do adversário.
 #[allow(clippy::too_many_arguments)]
 fn manual_tick(
     time: Res<Time>,
     ff: Res<FastForward>,
-    run: Res<RunRes>,
     mut manual: ResMut<ManualRes>,
     mut pb: ResMut<PlaybackRes>,
     mut pending: ResMut<PendingUi>,
     mut log: BattleLogTextQuery,
     mut header: BattleHdrQuery,
+    mut chains: ChainsTextQuery,
     mut queue: ResMut<FxQueue>,
 ) {
-    // desestrutura para satisfazer o borrowck (ResMut deref é opaco)
-    let ManualRes { f, ev_cursor, parsed, auto } = &mut *manual;
-    let Some(f) = f.as_mut() else { return };
+    let Some(ctl) = manual.ctl.as_mut() else { return };
     if pb.finished {
         return; // battle_finish conduz a transição
     }
@@ -1893,145 +2012,385 @@ fn manual_tick(
         return;
     }
 
-    // 1) drena um evento por tick (mesmo ritmo do playback automático)
-    if *ev_cursor < parsed.len() {
-        let ev = parsed[*ev_cursor].clone();
-        *ev_cursor += 1;
-        process_event(&ev, &mut pb, &mut log, &mut header, &mut queue);
-        let (passo, rodada) = if ff.0 {
-            (STEP_SECS / 6.0, ROUND_SECS / 6.0)
-        } else {
-            (STEP_SECS, ROUND_SECS)
-        };
-        pb.wait = if ev.kind == EvKind::Round { rodada } else { passo };
+    // 1) evento pendente na fila → reproduz (1 por tick)
+    if let Some(ev) = ctl.next_event() {
+        ctl.advance_event();
+        aplicar_evento(&ev, &mut pb, &mut log, &mut header, &mut chains, &mut queue, &mut ctl.bt);
+        pb.wait = pacing(&ev, ff.0);
         return;
     }
 
-    // 2) batalha concluída → entrega o resultado para o battle_finish
-    if let Some(outcome) = f.outcome_opt() {
-        pb.finished = true;
-        pb.wait = 1.1;
-        pb.outcome = outcome;
-        pb.chains = f.chain_links();
-        pb.rounds = f.rounds() as u64;
-        return;
-    }
-
-    // 3) decisão pendente → painel do jogador (ou resolução automática)
-    if f.pending_decision().is_some() {
-        if *auto {
-            f.auto_resolve_pending();
-            pb.wait = 0.12;
-            return;
-        }
-        if !pending.active {
-            let p = f.pending_decision().expect("decisão verificada acima");
-            let ci = run.team[p.slot.min(run.team.len().saturating_sub(1))];
-            let c = &run.roster.characters[ci.min(run.roster.len().saturating_sub(1))];
-            pending.active = true;
-            pending.choosing_target = false;
-            pending.name = p.name.clone();
-            pending.chakra = p.chakra;
-            pending.mystery_ready = p.mystery_ready;
-            pending.mystery_cost = p.mystery_cost;
-            pending.mystery_name = c.mystery.name.clone();
-            pending.mystery_desc = c.mystery.effect.clone();
-            pending.standard_name = c.standard.name.clone();
-            for (i, b2) in f.side_brief(1).iter().enumerate() {
-                pending.targets[i] = (
-                    b2.name.clone(),
-                    if b2.hp_max > 0 { b2.hp * 100 / b2.hp_max } else { 0 },
-                    b2.alive,
-                );
+    // 2) avança o controlador
+    match ctl.pump() {
+        CtlPhase::PlayingEvents => { /* eventos novos ficam para o próximo tick */ }
+        CtlPhase::AwaitingPlayer { chase } => {
+            if ctl.auto_player {
+                // modo Auto: a IA simétrica decide pelo jogador
+                let p = ctl.prompt().expect("prompt na vez");
+                let acao = if chase {
+                    match ctl.bt.chase_eligible_slots(p.side).first() {
+                        Some(&s) => ChosenAction::Chase { chaser_slot: s },
+                        None => ChosenAction::RejectChase,
+                    }
+                } else {
+                    crate::controller::greedy_decide(&ctl.bt, &p)
+                };
+                let _ = ctl.submit(acao);
+                pb.wait = 0.12;
+            } else {
+                preencher_painel(ctl, chase, &mut pending);
+                pb.wait = 0.05;
             }
         }
-        return; // aguarda o clique do jogador
+        CtlPhase::Done(outcome) => {
+            pb.finished = true;
+            pb.wait = 1.1;
+            pb.outcome = outcome;
+            pb.chains = ctl.bt.chain_links();
+            pb.rounds = ctl.bt.round() as u64;
+            pending.active = false;
+            pending.chase = false;
+        }
     }
-
-    // 4) avança um passo atômico e enfileira os eventos novos
-    let before = f.events().len();
-    f.advance_one();
-    for linha in &f.events()[before..] {
-        parsed.push(parse_line(linha));
-    }
-    pb.wait = 0.05;
 }
 
-/// Sincroniza visibilidade e textos do painel de decisão manual.
+/// Preenche o painel de decisão com o estado da vez corrente.
+fn preencher_painel(ctl: &mut BattleController, chase: bool, pending: &mut PendingUi) {
+    let Some(p) = ctl.prompt() else { return };
+    pending.active = true;
+    pending.chase = chase;
+    pending.choosing_target = false;
+    pending.selected = None;
+    pending.target_enemy = true;
+    let u = ctl.bt.unit(p.side, p.slot);
+    pending.name = u.name.clone();
+    pending.hp = u.hp;
+    pending.hp_max = u.hp_max;
+    pending.fluxo = u.fluxo;
+    // botões [1]..[4]
+    let legais = ctl.bt.legal_actions(p.side, p.slot);
+    let achar = |k: ActionKind| legais.iter().find(|l| l.kind == k).cloned();
+    let mk = |k: ActionKind, nome: String| match achar(k) {
+        Some(l) => (format!("[{}] {nome}", match k { ActionKind::Standard => "1", ActionKind::Skill => "2", ActionKind::Mystery => "3", _ => "4" }), l.fluxo_cost, true, String::new()),
+        None => {
+            let motivo = match k {
+                ActionKind::Mystery => format!("R{}", u.mystery_unlock_round),
+                ActionKind::Skill => "CD".to_string(),
+                ActionKind::Interrupt => "—".to_string(),
+                _ => String::new(),
+            };
+            (format!("[{}] {nome}", match k { ActionKind::Standard => "1", ActionKind::Skill => "2", ActionKind::Mystery => "3", _ => "4" }), 0, false, motivo)
+        }
+    };
+    pending.actions = [
+        mk(ActionKind::Standard, u.standard_name.clone()),
+        mk(ActionKind::Skill, format!("Skill «{}»", u.skill_name)),
+        mk(ActionKind::Mystery, format!("Mystery «{}»", u.mystery_name)),
+        mk(ActionKind::Interrupt, "Interrupt".to_string()),
+    ];
+    // alvos
+    for k in 0..4 {
+        let e = ctl.bt.unit(1, k);
+        let a = ctl.bt.unit(0, k);
+        pending.targets[k] = (e.name.clone(), if e.hp_max > 0 { e.hp * 100 / e.hp_max } else { 0 }, e.alive);
+        pending.allies[k] = (a.name.clone(), if a.hp_max > 0 { a.hp * 100 / a.hp_max } else { 0 }, a.alive);
+    }
+    // chase
+    pending.chasers = if chase { ctl.bt.chase_eligible_slots(p.side) } else { Vec::new() };
+    // timeline visível (rodada corrente, marcando a posição)
+    let tl = ctl.bt.timeline();
+    let cur = ctl.bt.timeline_cursor();
+    let mut texto = String::from("Ordem: ");
+    for (i, (side, slot)) in tl.iter().enumerate() {
+        if i > 0 {
+            texto.push(' ');
+        }
+        let nome = ctl.bt.unit(*side, *slot).name.chars().take(2).collect::<String>();
+        if i == cur {
+            texto.push_str(&format!("[{nome}]"));
+        } else if i < cur {
+            texto.push_str(&format!("{nome}·"));
+        } else {
+            texto.push_str(&nome);
+        }
+    }
+    pending.timeline = texto;
+    pending.preview = String::new();
+}
+
+/// Traduz um [`BattleEvent`] fino para o estado visual + fila de efeitos.
+/// (O modo manual NUNCA parseia texto — consome eventos estruturados.)
+#[allow(clippy::too_many_arguments)]
+fn aplicar_evento(
+    ev: &BattleEvent,
+    pb: &mut PlaybackRes,
+    log: &mut BattleLogTextQuery,
+    header: &mut BattleHdrQuery,
+    chains: &mut ChainsTextQuery,
+    queue: &mut FxQueue,
+    bt: &mut turnrush_core::interactive::InteractiveBattle,
+) {
+    use turnrush_core::interactive::SkipReason;
+    let mut linha = String::new();
+    match ev {
+        BattleEvent::RoundStart { round, starter } => {
+            if let Ok(mut h) = header.single_mut() {
+                let boss = *round >= 3;
+                *h = Text::new(format!(
+                    "Batalha — rodada {round}{} (abre: {})",
+                    if boss { " · BOSS" } else { "" },
+                    if *starter == 0 { "você" } else { "inimigo" }
+                ));
+            }
+            queue.0.push(VisEvent::Round(*round as u64));
+        }
+        BattleEvent::FluxoGain { side, slot, amount } => {
+            pb.fluxo[side * 4 + slot] = bt.unit(*side, *slot).fluxo;
+            let _ = amount;
+        }
+        BattleEvent::ActionDeclared { side, slot, kind, name, target } => {
+            let ator = side * 4 + slot;
+            queue.0.push(VisEvent::Lunge(ator));
+            linha = match target {
+                Some((tside, tslot)) => {
+                    format!(
+                        "{} usa «{name}» → {}",
+                        bt.unit(*side, *slot).name,
+                        bt.unit(*tside, *tslot).name
+                    )
+                }
+                None => format!("{} usa «{name}»", bt.unit(*side, *slot).name),
+            };
+            if *kind == ActionKind::Mystery {
+                queue.0.push(VisEvent::Chain); // brilho de mystery reutiliza o efeito de cadeia
+            }
+        }
+        BattleEvent::Damage { side, slot, amount, killed } => {
+            let idx = side * 4 + slot;
+            pb.taken[idx] += (*amount).max(0) as i64;
+            if *killed {
+                pb.alive[idx] = false;
+                pb.taken[idx] = pb.max_hp[idx] * 2;
+                queue.0.push(VisEvent::Death(idx));
+                linha = format!("✖ {} caiu", bt.unit(*side, *slot).name);
+            } else if *amount > 0 {
+                queue.0.push(VisEvent::Hit(idx, *amount as i64));
+            }
+        }
+        BattleEvent::Heal { side, slot, amount } => {
+            pb.healed[side * 4 + slot] += (*amount).max(0) as i64;
+            if *amount > 0 {
+                queue.0.push(VisEvent::Heal(side * 4 + slot, *amount as i64));
+            }
+            linha = format!("cura {amount} em {}", bt.unit(*side, *slot).name);
+        }
+        BattleEvent::Revive { side, slot, amount } => {
+            pb.alive[side * 4 + slot] = true;
+            pb.taken[side * 4 + slot] = (pb.max_hp[side * 4 + slot] - *amount as i64).max(0);
+            queue.0.push(VisEvent::Heal(side * 4 + slot, *amount as i64));
+            linha = format!("✦ {} revive com {amount} de HP!", bt.unit(*side, *slot).name);
+        }
+        BattleEvent::Shield { side, slot, amount } => {
+            queue.0.push(VisEvent::Heal(side * 4 + slot, *amount as i64));
+            linha = format!("escudo {amount} em {}", bt.unit(*side, *slot).name);
+        }
+        BattleEvent::StateApplied { side, slot, state } => {
+            queue.0.push(VisEvent::Dot(side * 4 + slot, estado_icone(state.label())));
+            linha = format!("{} recebe {}", bt.unit(*side, *slot).name, state.label());
+        }
+        BattleEvent::Debuffed { side, slot, kind } => {
+            queue.0.push(VisEvent::Dot(side * 4 + slot, 2));
+            linha = match kind {
+                turnrush_core::data::InterruptKind::Stun => {
+                    format!("{} foi ATORDOADO (perde a próxima ação)", bt.unit(*side, *slot).name)
+                }
+                turnrush_core::data::InterruptKind::Silence => {
+                    format!("{} foi SILENCIADO (sem Skill/Mystery)", bt.unit(*side, *slot).name)
+                }
+            };
+        }
+        BattleEvent::Skip { side, slot, reason } => {
+            linha = match reason {
+                SkipReason::Dead => format!("{} está caído — vez passada", bt.unit(*side, *slot).name),
+                SkipReason::Stunned => format!("{} está atordoado — vez passada", bt.unit(*side, *slot).name),
+            };
+        }
+        BattleEvent::ChaseOffered { side, target, state, eligible } => {
+            linha = format!(
+                "janela de perseguição: {} sob {} — {} pode perseguir",
+                bt.unit(target.0, target.1).name,
+                state.label(),
+                if eligible.is_empty() { "ninguém".to_string() } else { "aliado(s)".to_string() }
+            );
+            let _ = side;
+        }
+        BattleEvent::ChaseResolved { chaser, target, amount, killed } => {
+            let ci = chaser.0 * 4 + chaser.1;
+            let ti = target.0 * 4 + target.1;
+            queue.0.push(VisEvent::Lunge(ci));
+            if *killed {
+                pb.alive[ti] = false;
+                pb.taken[ti] = pb.max_hp[ti] * 2;
+                pb.taken[ti] += (*amount).max(0) as i64;
+                queue.0.push(VisEvent::Death(ti));
+            } else {
+                pb.taken[ti] += (*amount).max(0) as i64;
+                queue.0.push(VisEvent::Hit(ti, *amount as i64));
+            }
+            queue.0.push(VisEvent::Chain);
+            pb.chains += 1;
+            if let Ok(mut t) = chains.single_mut() {
+                *t = Text::new(format!("Chains: {}", pb.chains));
+            }
+            linha = format!("chase: {} → {} ({amount} de dano)", bt.unit(chaser.0, chaser.1).name, bt.unit(target.0, target.1).name);
+        }
+        BattleEvent::ChaseRejected { side } => {
+            linha = "cadeia recusada (tática)".to_string();
+            let _ = side;
+        }
+        BattleEvent::RoundEnd { .. } => {}
+        BattleEvent::BattleOver { outcome } => {
+            pb.outcome = *outcome;
+            queue.0.push(VisEvent::End(*outcome == Outcome::TeamAWin));
+            linha = format!("fim: {outcome:?}");
+        }
+        BattleEvent::Unmodeled { text } => {
+            linha = format!("[sem efeito] {text}");
+        }
+    }
+    if linha.is_empty() {
+        return;
+    }
+    if let Ok(mut t) = log.single_mut() {
+        let mut atual = t.to_string();
+        if atual.is_empty() {
+            atual = linha;
+        } else {
+            atual.push('\n');
+            atual.push_str(&linha);
+        }
+        let linhas: Vec<&str> = atual.lines().collect();
+        if linhas.len() > 12 {
+            atual = linhas[linhas.len() - 12..].join("\n");
+        }
+        *t = Text::new(atual);
+    }
+}
+
+/// Sincroniza visibilidade e textos do painel de comando manual (v0.7).
 #[allow(clippy::type_complexity)] // queries com Without explícito (B0001)
+#[allow(clippy::too_many_arguments)] // assinatura de sistema Bevy
 fn sync_decision_panel(
     pending: Res<PendingUi>,
     mut panel: Query<&mut Visibility, (With<DecPanel>, Without<DecTargetRow>)>,
     mut trow: Query<&mut Visibility, (With<DecTargetRow>, Without<DecPanel>)>,
-    // `Without` obrigatório: Bevy exige disjunção PROVÁVEL entre &mut Text
-    // do mesmo sistema (With<> sozinho não basta — erro B0001 em runtime).
+    mut scene: ResMut<BattleScene>,
     mut title: Query<
         &mut Text,
-        (With<DecTitleText>, Without<DecMysteryLabel>, Without<DecStandardLabel>, Without<DecTargetLabel>),
+        (With<DecTitleText>, Without<DecPreviewText>, Without<DecMysteryLabel>, Without<DecStandardLabel>, Without<DecTargetLabel>, Without<ChaseText>, Without<TimelineText>),
     >,
-    mut mlabel: Query<
+    mut preview: Query<
         &mut Text,
-        (With<DecMysteryLabel>, Without<DecTitleText>, Without<DecStandardLabel>, Without<DecTargetLabel>),
+        (With<DecPreviewText>, Without<DecTitleText>, Without<DecMysteryLabel>, Without<DecStandardLabel>, Without<DecTargetLabel>, Without<ChaseText>, Without<TimelineText>),
     >,
-    mut slabel: Query<
+    mut chase_banner: Query<
         &mut Text,
-        (With<DecStandardLabel>, Without<DecTitleText>, Without<DecMysteryLabel>, Without<DecTargetLabel>),
+        (With<ChaseText>, Without<DecTitleText>, Without<DecPreviewText>, Without<DecMysteryLabel>, Without<DecStandardLabel>, Without<DecTargetLabel>, Without<TimelineText>),
+    >,
+    mut timeline: Query<
+        &mut Text,
+        (With<TimelineText>, Without<DecTitleText>, Without<DecPreviewText>, Without<DecMysteryLabel>, Without<DecStandardLabel>, Without<DecTargetLabel>, Without<ChaseText>),
+    >,
+    mut labels: Query<
+        (&DecBtn, &mut BorderColor),
+        (Without<DecTargetBtn>, Without<DecTargetAutoBtn>, Without<SpeedBtn>, Without<BackBtn>, Without<MenuBtn>, Without<DraftCard>, Without<DraftConfirm>, Without<RewardBtn>, Without<RerollBtn>),
     >,
     mut tlabels: Query<
         (&DecTargetLabel, &mut Text),
-        (Without<DecTitleText>, Without<DecMysteryLabel>, Without<DecStandardLabel>),
+        (Without<DecTitleText>, Without<DecPreviewText>, Without<DecMysteryLabel>, Without<DecStandardLabel>, Without<ChaseText>, Without<TimelineText>),
     >,
 ) {
-    if !pending.is_changed() {
-        return;
-    }
     if let Ok(mut v) = panel.single_mut() {
         *v = if pending.active { Visibility::Visible } else { Visibility::Hidden };
     }
     if let Ok(mut v) = trow.single_mut() {
-        *v = if pending.active && pending.choosing_target {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
+        *v = if pending.active && pending.choosing_target { Visibility::Visible } else { Visibility::Hidden };
     }
     if let Ok(mut t) = title.single_mut() {
-        *t = if pending.active {
+        *t = if pending.active && !pending.chase {
             Text::new(format!(
-                "Sua vez — {} · chakra {}\n{}",
-                pending.name, pending.chakra, pending.mystery_desc
+                "Sua vez — {} · HP {}/{} · Fluxo ⚡{}",
+                pending.name, pending.hp, pending.hp_max, pending.fluxo
             ))
+        } else if pending.active {
+            Text::new(String::new())
         } else {
             Text::new("Sua vez")
         };
     }
-    if let Ok(mut t) = mlabel.single_mut() {
-        *t = if pending.mystery_ready {
-            Text::new(format!(
-                "Mystery «{}» · -{} chakra",
-                pending.mystery_name, pending.mystery_cost
-            ))
+    if let Ok(mut t) = preview.single_mut() {
+        *t = Text::new(pending.preview.clone());
+    }
+    if let Ok(mut t) = chase_banner.single_mut() {
+        *t = if pending.active && pending.chase {
+            Text::new("CADEIA! [ENTER] persegue · [ESC] recusa (tática válida)")
         } else {
-            Text::new(format!("Mystery «{}» · indisponível", pending.mystery_name))
+            Text::new(String::new())
         };
     }
-    if let Ok(mut t) = slabel.single_mut() {
-        *t = Text::new(format!("Padrão «{}» → alvo…", pending.standard_name));
+    if let Ok(mut t) = timeline.single_mut() {
+        *t = Text::new(pending.timeline.clone());
     }
+    // borda dourada nos botões disponíveis + destaque da ação selecionada
+    for (btn, mut borda) in labels.iter_mut() {
+        let idx = match btn.0 {
+            DecKind::Standard => 0,
+            DecKind::Skill => 1,
+            DecKind::Mystery => 2,
+            DecKind::Interrupt => 3,
+            DecKind::Auto => continue,
+        };
+        let (_, _, disponivel, _) = pending.actions[idx];
+        let selecionada = pending.selected == Some(match btn.0 {
+            DecKind::Standard => ActionKind::Standard,
+            DecKind::Skill => ActionKind::Skill,
+            DecKind::Mystery => ActionKind::Mystery,
+            _ => ActionKind::Interrupt,
+        });
+        *borda = BorderColor::all(if !pending.active {
+            TXT_DIM
+        } else if selecionada {
+            AMBER
+        } else if disponivel {
+            GOOD
+        } else {
+            Color::srgb(0.28, 0.28, 0.32)
+        });
+    }
+    // rótulos de alvo (inimigos ou aliados)
     for (lbl, mut t) in tlabels.iter_mut() {
-        let (nome, hp, vivo) = &pending.targets[lbl.0.min(3)];
+        let k = lbl.0.min(3);
+        let fonte = if pending.target_enemy { &pending.targets } else { &pending.allies };
+        let (nome, hp, vivo) = &fonte[k];
         *t = if *vivo {
             Text::new(format!("{nome} · {hp}%"))
         } else {
             Text::new(format!("{nome} · caído"))
         };
     }
+    // highlight dourado dos perseguidores elegíveis (cena)
+    scene.chase_gold = if pending.active && pending.chase {
+        pending.chasers.clone()
+    } else {
+        Vec::new()
+    };
 }
 
-/// Cliques do painel de decisão: Mystery / Padrão (→ escolha de alvo) / Auto.
+/// Cliques do painel de comando: ação → alvo (quando preciso) → executa.
 fn decision_click(
     mut manual: ResMut<ManualRes>,
     mut pending: ResMut<PendingUi>,
+    mut scene: ResMut<BattleScene>,
     q: Query<(&Interaction, &DecBtn), Changed<Interaction>>,
 ) {
     if !pending.active {
@@ -2042,79 +2401,255 @@ fn decision_click(
             continue;
         }
         match b.0 {
-            DecKind::Mystery => {
-                if let Some(f) = manual.f.as_mut() {
-                    f.submit(ActionChoice::Mystery);
+            DecKind::Auto => {
+                if let Some(ctl) = manual.ctl.as_mut() {
+                    ctl.auto_player = !ctl.auto_player;
+                    manual.auto = ctl.auto_player;
                 }
                 pending.active = false;
+                pending.chase = false;
+                scene.chase_gold.clear();
             }
-            DecKind::Standard => {
-                pending.choosing_target = true;
+            kind_btn => {
+                if pending.chase {
+                    continue; // na janela de chase só ENTER/ESC decidem
+                }
+                let kind = match kind_btn {
+                    DecKind::Standard => ActionKind::Standard,
+                    DecKind::Skill => ActionKind::Skill,
+                    DecKind::Mystery => ActionKind::Mystery,
+                    _ => continue,
+                };
+                escolher_acao(manual.ctl.as_mut(), &mut pending, kind);
             }
-            DecKind::Auto => {
-                manual.auto = true;
-                pending.active = false;
-            }
-        }
-        if !pending.active {
-            pending.choosing_target = false;
-            turnrush_core::logger::kv(
-                turnrush_core::logger::Level::Info,
-                "manual_decision",
-                "decisão manual submetida",
-                &[("tipo", turnrush_core::logger::V::S(match b.0 {
-                    DecKind::Mystery => "mystery",
-                    DecKind::Auto => "auto",
-                    DecKind::Standard => "standard",
-                }))],
-            );
         }
     }
 }
 
-/// Clique em alvo inimigo (ataque padrão com alvo escolhido) ou Auto-alvo.
+/// Seleciona uma ação: precisa de alvo → abre a fila de alvos; senão executa.
+fn escolher_acao(ctl: Option<&mut BattleController>, pending: &mut PendingUi, kind: ActionKind) {
+    let Some(ctl) = ctl else { return };
+    let Some(p) = ctl.prompt() else { return };
+    let Some(legal) = ctl.bt.legal_actions(p.side, p.slot).into_iter().find(|l| l.kind == kind) else {
+        return; // indisponível (CD/fluxo/unlock) — botão já aparece desabilitado
+    };
+    let precisa_alvo = match legal.targeting {
+        turnrush_core::interactive::TargetKind::Enemy => true,
+        turnrush_core::interactive::TargetKind::Ally => true,
+        turnrush_core::interactive::TargetKind::Auto => false,
+    };
+    if precisa_alvo {
+        pending.selected = Some(kind);
+        pending.choosing_target = true;
+        pending.target_enemy = legal.targeting == turnrush_core::interactive::TargetKind::Enemy;
+        // prévia da ação com auto-alvo
+        let prev = ctl.bt.preview_action(p.side, p.slot, ChosenAction::Act { kind, target: None }).ok();
+        pending.preview = format_previsao(&prev, kind);
+    } else {
+        let prev = ctl.bt.preview_action(p.side, p.slot, ChosenAction::Act { kind, target: None }).ok();
+        pending.preview = format_previsao(&prev, kind);
+        let _ = ctl.submit(ChosenAction::Act { kind, target: None });
+        pending.active = false;
+        turnrush_core::logger::kv(
+            turnrush_core::logger::Level::Info,
+            "manual_decision",
+            "decisão manual submetida",
+            &[("tipo", turnrush_core::logger::V::S(kind.label()))],
+        );
+    }
+}
+
+/// Formata a linha de previsão para a UI (números EXATOS da engine).
+fn format_previsao(prev: &Option<turnrush_core::interactive::ActionPreview>, kind: ActionKind) -> String {
+    let Some(p) = prev else { return String::new() };
+    let mut partes = Vec::new();
+    if p.damage > 0 {
+        partes.push(format!("dano {} (total)", p.damage));
+    }
+    if p.heal > 0 {
+        partes.push(format!("cura {}", p.heal));
+    }
+    if p.shield > 0 {
+        partes.push(format!("escudo {}", p.shield));
+    }
+    if !p.states.is_empty() {
+        partes.push(format!("aplica {}", p.states.len()));
+    }
+    if p.fluxo_delta != 0 {
+        partes.push(if p.fluxo_delta > 0 {
+            format!("⚡+{}", p.fluxo_delta)
+        } else {
+            format!("⚡{}", p.fluxo_delta)
+        });
+    }
+    for n in &p.notes {
+        partes.push(n.clone());
+    }
+    if partes.is_empty() {
+        return match kind {
+            ActionKind::Interrupt => "interrompe o alvo (atordoa/silencia)".to_string(),
+            _ => String::new(),
+        };
+    }
+    partes.join(" · ")
+}
+
+/// Clique em alvo (inimigo ou aliado) ou Auto-alvo — executa a ação pendente.
 #[allow(clippy::type_complexity)] // query de Interaction com filtro de estado
 fn target_click(
     mut manual: ResMut<ManualRes>,
     mut pending: ResMut<PendingUi>,
+    mut scene: ResMut<BattleScene>,
     targets: Query<(&Interaction, &DecTargetBtn), (Changed<Interaction>, Without<DecTargetAutoBtn>)>,
     autos: Query<&Interaction, (With<DecTargetAutoBtn>, Changed<Interaction>)>,
 ) {
-    if !pending.active || !pending.choosing_target {
+    if !pending.active || !pending.choosing_target || pending.chase {
         return;
     }
+    let Some(kind) = pending.selected else { return };
     for (inter, tb) in targets.iter() {
         if *inter != Interaction::Pressed {
             continue;
         }
         let slot = tb.0.min(3);
-        if !pending.targets[slot].2 {
+        let fonte = if pending.target_enemy { &pending.targets } else { &pending.allies };
+        if !fonte[slot].2 {
             continue; // alvo caído — ignora
         }
-        if let Some(f) = manual.f.as_mut() {
-            f.submit(ActionChoice::Standard { target: Some(slot) });
+        if let Some(ctl) = manual.ctl.as_mut() {
+            let _ = ctl.submit(ChosenAction::Act { kind, target: Some(slot) });
             turnrush_core::logger::kv(
                 turnrush_core::logger::Level::Info,
                 "manual_target",
-                "alvo do padrão escolhido",
+                "alvo escolhido",
                 &[
                     ("slot", turnrush_core::logger::V::U(slot as u64)),
-                    ("nome", turnrush_core::logger::V::S(&pending.targets[slot].0)),
+                    ("acao", turnrush_core::logger::V::S(kind.label())),
                 ],
             );
         }
         pending.active = false;
         pending.choosing_target = false;
+        pending.selected = None;
+        scene.chase_gold.clear();
         return;
     }
     for inter in autos.iter() {
         if *inter == Interaction::Pressed {
-            if let Some(f) = manual.f.as_mut() {
-                f.submit(ActionChoice::Standard { target: None });
+            if let Some(ctl) = manual.ctl.as_mut() {
+                let _ = ctl.submit(ChosenAction::Act { kind, target: None });
             }
             pending.active = false;
             pending.choosing_target = false;
+            pending.selected = None;
+            scene.chase_gold.clear();
             return;
+        }
+    }
+}
+
+/// Teclado da batalha manual (spec E.6): 1-4 ações · Q/W/E/R alvo inimigo ·
+/// A/S/D/F alvo aliado · ENTER confirma/auto-alvo/persegue · ESC cancela/recusa ·
+/// TAB alterna alvo inimigo rápido · SPACE 2× · Z modo Auto.
+#[allow(clippy::too_many_arguments)]
+fn battle_keys(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut manual: ResMut<ManualRes>,
+    mut pending: ResMut<PendingUi>,
+    mut ff: ResMut<FastForward>,
+    mut scene: ResMut<BattleScene>,
+) {
+    if !pending.active {
+        // SPACE fora da decisão também acelera
+        if keys.just_pressed(KeyCode::Space) {
+            ff.0 = !ff.0;
+        }
+        return;
+    }
+    if keys.just_pressed(KeyCode::Space) {
+        ff.0 = !ff.0;
+    }
+    if keys.just_pressed(KeyCode::KeyZ) {
+        if let Some(ctl) = manual.ctl.as_mut() {
+            ctl.auto_player = !ctl.auto_player;
+            manual.auto = ctl.auto_player;
+        }
+        pending.active = false;
+        pending.chase = false;
+        scene.chase_gold.clear();
+        return;
+    }
+    // janela de chase: ENTER confirma (1º elegível), ESC recusa
+    if pending.chase {
+        if keys.just_pressed(KeyCode::Enter) {
+            if let Some(ctl) = manual.ctl.as_mut() {
+                let acao = match ctl.bt.chase_eligible_slots(0).first() {
+                    Some(&s) => ChosenAction::Chase { chaser_slot: s },
+                    None => ChosenAction::RejectChase,
+                };
+                let _ = ctl.submit(acao);
+            }
+            pending.active = false;
+            pending.chase = false;
+            scene.chase_gold.clear();
+        } else if keys.just_pressed(KeyCode::Escape) {
+            if let Some(ctl) = manual.ctl.as_mut() {
+                let _ = ctl.submit(ChosenAction::RejectChase);
+            }
+            pending.active = false;
+            pending.chase = false;
+            scene.chase_gold.clear();
+        }
+        return;
+    }
+    // ações [1]-[4]
+    if keys.just_pressed(KeyCode::Digit1) {
+        escolher_acao(manual.ctl.as_mut(), &mut pending, ActionKind::Standard);
+    } else if keys.just_pressed(KeyCode::Digit2) {
+        escolher_acao(manual.ctl.as_mut(), &mut pending, ActionKind::Skill);
+    } else if keys.just_pressed(KeyCode::Digit3) {
+        escolher_acao(manual.ctl.as_mut(), &mut pending, ActionKind::Mystery);
+    } else if keys.just_pressed(KeyCode::Digit4) {
+        escolher_acao(manual.ctl.as_mut(), &mut pending, ActionKind::Interrupt);
+    }
+    // cancelar escolha de alvo
+    if keys.just_pressed(KeyCode::Escape) && pending.choosing_target {
+        pending.choosing_target = false;
+        pending.selected = None;
+        pending.preview = String::new();
+        return;
+    }
+    // alvos
+    if pending.choosing_target {
+        let teclas: [(KeyCode, usize, bool); 9] = [
+            (KeyCode::KeyQ, 0, true),
+            (KeyCode::KeyW, 1, true),
+            (KeyCode::KeyE, 2, true),
+            (KeyCode::KeyR, 3, true),
+            (KeyCode::KeyA, 0, false),
+            (KeyCode::KeyS, 1, false),
+            (KeyCode::KeyD, 2, false),
+            (KeyCode::KeyF, 3, false),
+            (KeyCode::Enter, usize::MAX, pending.target_enemy),
+        ];
+        for (tecla, slot, inimigo) in teclas {
+            if !keys.just_pressed(tecla) {
+                continue;
+            }
+            let fonte = if inimigo && slot != usize::MAX { &pending.targets } else { &pending.allies };
+            if slot != usize::MAX && !fonte[slot].2 {
+                continue; // caído
+            }
+            let kind = pending.selected.expect("seleção verificada");
+            let alvo = if slot == usize::MAX { None } else { Some(slot) };
+            if let Some(ctl) = manual.ctl.as_mut() {
+                let _ = ctl.submit(ChosenAction::Act { kind, target: alvo });
+            }
+            pending.active = false;
+            pending.choosing_target = false;
+            pending.selected = None;
+            scene.chase_gold.clear();
+            break;
         }
     }
 }
@@ -2223,12 +2758,15 @@ fn battle_finish(
 // Recompensa
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)] // assinatura de sistema Bevy
 fn reward_click(
     mut cmds: Commands,
     mut run: ResMut<RunRes>,
     mut pb: ResMut<PlaybackRes>,
+    pref: Res<PlaybackPref>,
     mut manual: ResMut<ManualRes>,
     mut pending: ResMut<PendingUi>,
+    mut scene: ResMut<BattleScene>,
     mut state: ResMut<NextState<GameState>>,
     q: Query<(&Interaction, &RewardBtn), Changed<Interaction>>,
 ) {
@@ -2259,7 +2797,8 @@ fn reward_click(
         );
         pending.active = false;
         pending.choosing_target = false;
-        build_manual(&mut run, &mut pb, &mut manual, &mut cmds);
+        scene.chase_gold.clear();
+        construir_batalha(pref.0, &mut run, &mut pb, &mut manual, &mut cmds);
         state.set(GameState::Battle);
         break;
     }

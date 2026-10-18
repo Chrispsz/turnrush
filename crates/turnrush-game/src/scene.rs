@@ -63,6 +63,8 @@ pub struct UnitVis {
     name: Entity,
     barbg: Entity,
     barfill: Entity,
+    fluxbg: Entity,
+    fluxfill: Entity,
     dots: [Entity; 4],
     base: Vec2,
     bob: f32,
@@ -79,6 +81,8 @@ pub struct BattleScene {
     pub spawned: Vec<Entity>,
     pub shake: f32,
     pub chains: u64,
+    /// Unidades com highlight dourado (janela de chase manual, v0.7).
+    pub chase_gold: Vec<usize>,
 }
 
 /// Brasas ambientes (visíveis em todas as telas — clima de roguelike).
@@ -131,6 +135,7 @@ pub fn spawn_battle_scene(
     scene.spawned.clear();
     scene.shake = 0.0;
     scene.chains = 0;
+    scene.chase_gold.clear();
     queue.0.clear();
 
     // ── piso da arena + linha central + lavagem de cor por lado ──
@@ -263,6 +268,29 @@ pub fn spawn_battle_scene(
                     Transform::from_xyz(base.x - 47.0, base.y - 44.0, 1.5),
                 ))
                 .id();
+            let fluxbg = cmds
+                .spawn((
+                    Sprite {
+                        image: tex.white.clone(),
+                        custom_size: Some(Vec2::new(98.0, 7.0)),
+                        color: Color::srgb(0.05, 0.07, 0.10),
+                        ..default()
+                    },
+                    Transform::from_xyz(base.x, base.y - 55.0, 1.0),
+                ))
+                .id();
+            let fluxfill = cmds
+                .spawn((
+                    Sprite {
+                        image: tex.white.clone(),
+                        custom_size: Some(Vec2::new(94.0, 4.0)),
+                        color: Color::srgb(0.30, 0.75, 0.95),
+                        ..default()
+                    },
+                    Anchor(Anchor::CENTER_LEFT.0),
+                    Transform::from_xyz(base.x - 47.0, base.y - 55.0, 1.5),
+                ))
+                .id();
             let mut dots = [Entity::PLACEHOLDER; 4];
             for (k, dot) in dots.iter_mut().enumerate() {
                 let dx = base.x - 18.0 + 12.0 * k as f32;
@@ -279,13 +307,15 @@ pub fn spawn_battle_scene(
                     ))
                     .id();
             }
-            scene.spawned.extend([sprite, name, barbg, barfill]);
+            scene.spawned.extend([sprite, name, barbg, barfill, fluxbg, fluxfill]);
             scene.spawned.extend(dots);
             scene.units[u] = Some(UnitVis {
                 sprite,
                 name,
                 barbg,
                 barfill,
+                fluxbg,
+                fluxfill,
                 dots,
                 base,
                 bob: (u as f32) * 1.31,
@@ -427,6 +457,7 @@ pub fn scene_animate(
 ) {
     let dt = time.delta_secs();
     let t = time.elapsed_secs();
+    let dourados: Vec<usize> = scene.chase_gold.clone();
     for u in 0..8usize {
         let Some(v) = scene.units[u].as_mut() else { continue };
         // barra persegue o HP real (suavizado)
@@ -437,6 +468,12 @@ pub fn scene_animate(
         let mut dx = 0.0;
         let mut dy = 0.0;
         let mut tint = Color::WHITE;
+        // highlight dourado da janela de chase (pulsa)
+        let dourado = dourados.contains(&u) && v.hit.is_none() && v.death.is_none();
+        if dourado {
+            let pulso = 0.72 + 0.28 * (t * 6.0).sin().abs();
+            tint = Color::srgb(1.0 * pulso, 0.82 * pulso, 0.25 * pulso);
+        }
         if let Some((lt, dir)) = v.lunge.as_mut() {
             *lt += dt;
             let k = (*lt / LUNGE_SECS).min(1.0);
@@ -475,6 +512,11 @@ pub fn scene_animate(
             tr.translation.y = v.base.y + 36.0 + dy;
             sp.color = tint;
         }
+        // barra de fluxo (teto 100 — visível dos DOIS lados: ⚡ simétrico)
+        let fluxo_pct = (pb.fluxo[u].clamp(0, 100) as f32) / 100.0;
+        if let Ok((_, mut fl)) = sprites.get_mut(v.fluxfill) {
+            fl.custom_size = Some(Vec2::new((94.0 * fluxo_pct).max(0.0), 4.0));
+        }
         // barra de HP
         if let Ok((_, mut bar)) = sprites.get_mut(v.barfill) {
             bar.custom_size = Some(Vec2::new((94.0 * v.hp_disp).max(0.0), 6.0));
@@ -490,7 +532,7 @@ pub fn scene_animate(
         }
         // visibilidade na morte
         let hide = if dead_hidden { Visibility::Hidden } else { Visibility::Visible };
-        for e in [v.sprite, v.name, v.barbg, v.barfill] {
+        for e in [v.sprite, v.name, v.barbg, v.barfill, v.fluxbg, v.fluxfill] {
             if let Ok(mut viz) = vis.get_mut(e) {
                 *viz = hide;
             }

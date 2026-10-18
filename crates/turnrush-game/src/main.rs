@@ -23,7 +23,8 @@ fn main() {
         checar_headless();
         return;
     }
-    app::run(parse_shot(&args));
+    let playback = args.iter().any(|a| a == "--playback");
+    app::run(parse_shot(&args), playback);
 }
 
 /// Parseia `--shot <caminho_base>`; devolve `None` quando ausente.
