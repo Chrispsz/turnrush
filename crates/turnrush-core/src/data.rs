@@ -640,7 +640,9 @@ fn parse_char(i: usize, j: &crate::json::Json) -> Result<RosterChar, String> {
             if o.as_obj().is_none() {
                 return Err(format!("roster: '{ictx}' deve ser um objeto"));
             }
-            let kind = req_enum(o, "kind", &ictx, InterruptKind::parse)?;
+            // spec usa "type"; aceitamos "kind" como alias histórico
+            let kind_field = if o.get("type").is_some() { "type" } else { "kind" };
+            let kind = req_enum(o, kind_field, &ictx, InterruptKind::parse)?;
             let window = match o.get("window") {
                 Some(v) => match v.as_int() {
                     Some(n) if (1..=3).contains(&n) => n as u32,
@@ -889,6 +891,73 @@ mod tests {
             }
             let _ = i;
         }
+    }
+
+    #[test]
+    fn roster_v2_do_jogo_tem_campos_v07() {
+        // Fonte da verdade: interrupt nos controllers, unlock por papel.
+        let src = include_str!("../../../data/roster/roster-v2.json");
+        let r = Roster::from_json(src).expect("roster v2 válido");
+        assert_eq!(r.len(), 16);
+        for c in &r.characters {
+            let esperado = if c.role == Role::Striker { 3 } else { 2 };
+            assert_eq!(c.mystery_unlock_round, esperado, "unlock de {}", c.id);
+        }
+        for id in ["nimbo", "ligeia", "ivo", "volta"] {
+            let c = r.characters.iter().find(|c| c.id == id).expect(id);
+            let it = c.interrupt.expect("controller tem interrupt");
+            assert_eq!(it.kind, InterruptKind::Stun);
+            assert_eq!(it.window, 1);
+        }
+        for c in &r.characters {
+            if !["nimbo", "ligeia", "ivo", "volta"].contains(&c.id.as_str()) {
+                assert!(c.interrupt.is_none(), "{} não deveria ter interrupt", c.id);
+            }
+        }
+    }
+
+    #[test]
+    fn unlock_e_interrupt_com_defaults_de_migracao() {
+        // Roster antigo (sem os campos novos) continua parseando: defaults.
+        let src = r#"{"version":2,"characters":[
+            {"id":"x1","name":"X1","faction":"ember","role":"striker",
+             "hp":100,"attack":20,"defense":10,"speed":9,
+             "mystery":{"name":"M","chakra":4,"cooldown":3,"targets":"random_2","damage_pct":80,"applies_state":"none","effect":""},
+             "standard":{"name":"S","damage_pct":60,"applies_state":"none"},
+             "chase":{"name":"C","trigger":"none","damage_pct":0,"applies_state":"none","max_per_round":0},
+             "passive":{"name":"","effect":""}}
+        ]}"#;
+        let r = Roster::from_json(src).expect("roster antigo válido");
+        let c = &r.characters[0];
+        assert_eq!(c.mystery_unlock_round, 3, "striker sem campo → default 3");
+        assert!(c.interrupt.is_none(), "sem campo → sem interrupt");
+    }
+
+    #[test]
+    fn interrupt_aceita_type_e_window_e_valida() {
+        let src = r#"{"version":2,"characters":[
+            {"id":"x1","name":"X1","faction":"ember","role":"controller",
+             "hp":100,"attack":20,"defense":10,"speed":9,
+             "interrupt":{"type":"silence","window":1},
+             "mystery":{"name":"M","chakra":4,"cooldown":3,"targets":"random_2","damage_pct":80,"applies_state":"none","effect":""},
+             "standard":{"name":"S","damage_pct":60,"applies_state":"none"},
+             "chase":{"name":"C","trigger":"none","damage_pct":0,"applies_state":"none","max_per_round":0},
+             "passive":{"name":"","effect":""}}
+        ]}"#;
+        let r = Roster::from_json(src).expect("interrupt silence válido");
+        let c = &r.characters[0];
+        assert_eq!(c.interrupt.expect("some").kind, InterruptKind::Silence);
+        assert_eq!(c.mystery_unlock_round, 2, "controller default 2");
+        // unlock_schedule explícito sobrescreve o default
+        let src2 = src.replace(
+            "\"interrupt\":{\"type\":\"silence\",\"window\":1},",
+            "\"unlock_schedule\":{\"mystery_round\":5},\"interrupt\":{\"type\":\"silence\",\"window\":1},",
+        );
+        let r2 = Roster::from_json(&src2).expect("unlock explícito válido");
+        assert_eq!(r2.characters[0].mystery_unlock_round, 5);
+        // kind inválido é rejeitado com mensagem clara
+        let bad = src.replace("\"type\":\"silence\"", "\"type\":\"sleep\"");
+        assert!(Roster::from_json(&bad).is_err(), "interrupt.kind inválido rejeitado");
     }
 
     #[test]

@@ -74,3 +74,21 @@ Cada chase: `max_per_round: 1` (contrato — 1 perseguição por unidade/rodada)
 5. **Estados são determinísticos** (sem "chance de"): o design do TurnRush troca probabilidade por custo/cooldown garantidos. Não reintroduzir RNG sem passar pelo DWC.
 6. **Perfuração** (Nereo −50% escudo, Reia −30% defesa) existe para punir stacking defensivo; manter os dois valores atrelados ao chase correspondente nos testes de confronto.
 7. Toda passiva de dano contínuo (Queimadura/Veneno) está em texto e precisa de interpretação do loader: sugestão 10% do attack/rodada, 2 rodadas, sem stack — anotar como decisão v0.3.
+
+## v0.7 — modo interativo (fluxo, tiers e interrupt)
+
+Campos **opcionais** no contrato v2 (migração: ausência = default por papel):
+
+- `"unlock_schedule": {"mystery_round": N}` — rodada em que a Mystery destrava
+  no modo interativo. Defaults: striker **3**, guardian/support/controller **2**.
+  A Skill (forma base da mystery) está disponível desde o início.
+- `"interrupt": {"type": "stun"|"silence", "window": 1}` — reação usada na
+  própria vez contra inimigo que AINDA vai agiar na rodada. Custa 35 de fluxo,
+  CD 3. Presente nos **4 controllers** (identidade de controle); os demais não
+  têm interrupt (default `None`).
+
+Economia do modo interativo: fluxo teto 100, +10/rodada, padrão grátis e gera
++15; Skill 30 (CD 2), Mystery 60 (CD 3). Bandas de dano derivadas na engine:
+Skill 120% (único/frente→100% multi) e Mystery 200% (único) / 100% (multi);
+cura/escudo da Mystery ×1,65. DoT do modo interativo: 30% do ATK/rodada, 2
+rodadas (o modo compacto v0.6 mantém 10% — fonte do Monte Carlo inalterada).
