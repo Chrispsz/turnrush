@@ -96,16 +96,17 @@ prontos para o netcode).
 - **2D** (decisão dos áudios); estilo final a definir (pixel art é o favorito
   para leveza e custo). Referência de composição: arena dividida, cartas
   flutuando entre os times.
-- Cliente 2D leve planejado: **macroquad** (binário pequeno, compila para
-  Windows/Mac/Linux/**WASM** sem mudanças).
+- Cliente 2D implementado com **Bevy 0.20** (ECS, UI nativa, fonte embutida,
+  zero assets externos).
 
 ## 7. Multiplayer (roadmap técnico)
 
-- **M1 (atual)**: motor determinístico + simulador + partida jogável local.
+- **M1 (✅)**: motor determinístico + simulador + partida jogável local.
 - **M2**: servidor autoritativo (tokio, WebSocket) — o cliente envia
   intenções (escolha de carta/ação), o servidor simula e difunde o estado.
   Determinismo = replay + validação anti-cheat.
-- **M3**: cliente gráfico 2D (macroquad) consumindo o mesmo `turnrush-core`.
+- **M3 (✅ 1ª versão)**: cliente gráfico 2D (Bevy) consumindo o mesmo
+  `turnrush-core` — modo offline vs IA jogável; netcode vem depois.
 - **M4**: beta fechada Linux, ranqueado por Elo.
 
 ## 8. Métricas de sucesso
@@ -185,3 +186,49 @@ arremesso→perseguição e ≥1 derrubada→perseguição.
 
 O draft continua simétrico: os dois jogadores veem as mesmas cartas; a LCE
 compensa sorte em tempo real; o DWC calibra por composição E por confronto.
+
+---
+
+## Atualização v0.5.0 — o jogo jogável offline (estado atual)
+
+### Loop do jogo (cliente Bevy — o que existe HOJE)
+
+```
+Menu ──→ Como Jogar (regras)  ─┐
+      ──→ Elenco (16 cartas)  ─┤
+      ──→ Draft: 8 cartas na mesa, escolha 4
+              ↓
+          Batalha 4v4 (playback da engine, Acelerar 1×/6×)
+              ↓ vitória
+          Recompensa: +10% dano | +10% vida | +5%/+5%
+              ↓ (inimigo seguinte: +11% dano / +7% vida POR vitória)
+          … 3 vitórias = run completa; derrota encerra (roguelike)
+```
+
+- **Modo offline vs IA**: o adversário é montado entre os personagens não
+  escolhidos e jogado pela heurística greedy do engine (a mesma do simulador
+  Monte Carlo — o que você enfrenta é o jogo "de verdade").
+- **Menu genérico mas funcional**: Como Jogar e Elenco documentam as regras
+  a partir da própria engine; nada de manual desatualizado.
+- **Esboço consciente**: cores de facção, cartas e log de combate já dão a
+  leitura tática; sprites/animações/nomes finais são a próxima fase.
+- **Verificação de visual sem interação**: `--shot` navega e captura as 5
+  telas (menu/como-jogar/elenco/draft/batalha) — roda no CI com Xvfb+lavapipe.
+
+### Métricas v0.5.0
+
+- 44 testes no workspace (determinismo, espelho ~50%, chase, logger, contrato
+  JSON, parser de eventos) · clippy zero warnings.
+- Gate 1v1 (desvio ≤ 0.15) + gate 4v4 no CI a cada push; cron noturno roda o
+  Monte Carlo completo.
+- Release: AppImage com o JOGO como executável principal + sim musl embutido.
+
+### Equilíbrio v0.5 — variância tática (correção dos contadores categóricos)
+
+A verificação v0.5 expôs e corrigiu uma falha real: sem variância tática, as
+batalhas 4v4 eram categóricas (winrates 0.000/1.000). Duas correções na
+engine — **ordem de movimento amostrada por batalha** (escolha tática do
+design) e **jitter de timing de mystery (1/4)** — deram gradiente contínuo
+aos winrates; o DWC 4v4 ganhou alcance (±550‰/±400‰ por comp; ±520‰/±320‰
+por confronto). Gate completo (150 sims): desvio médio **0.077 ≤ 0.15 — PASSOU**. Pares ainda
+categóricos por kit ficam listados como alvo de redesign de roster (v0.6).

@@ -1,8 +1,10 @@
 //! TurnRush 2D — cliente visual (Bevy).
 //!
-//! Fluxo jogável: Menu → Draft (escolha 4 de 8) → Batalha 4v4 (playback do
-//! engine determinístico com barras de HP, flashes e log) → Recompensa →
-//! próxima batalha (inimigos escalam) → Fim de run (3 vitórias).
+//! Fluxo jogável: Menu → (Como Jogar | Elenco |) Draft (escolha 4 de 8) →
+//! Batalha 4v4 (playback do engine determinístico com barras de HP, flashes e
+//! log, com botão Acelerar) → Recompensa → próxima batalha (inimigos escalam)
+//! → Fim de run (3 vitórias). O adversário é a IA do engine — modo OFFLINE
+//! completo para testar a mecânica sem servidor.
 //!
 //! Decisões de arquitetura:
 //! - **Zero assets externos**: UI via nodes/texto do Bevy e fonte embutida
@@ -26,8 +28,9 @@
 //!   acesso sobreposto panica ao inicializar o sistema (`battle_enter`).
 //! - **Fonte default é subset ASCII**: substituímos por DejaVu Sans Mono
 //!   embutida (via `AssetId::default()`) — acentos pt-BR agora renderizam.
-//! - **`--shot <base>`**: navega menu → draft → batalha, salva 3 PNGs e sai —
-//!   prova de renderização real sem interação (Xvfb + lavapipe/`WGPU_BACKEND`).
+//! - **`--shot <base>`**: navega menu → como-jogar → elenco → draft →
+//!   batalha, salva 5 PNGs e sai — prova de renderização real sem interação
+//!   (Xvfb + lavapipe/`WGPU_BACKEND`).
 //!
 //! NOTA: usamos `Button`/`Interaction` (deprecados no Bevy 0.20, removidos
 //! depois) porque ainda funcionam e mantêm o MVP simples; migração para
@@ -41,7 +44,7 @@ use bevy::text::FontSize;
 use bevy::window::WindowResolution;
 use std::collections::HashMap;
 
-use turnrush_core::data::Roster;
+use turnrush_core::data::{ComboState, Roster, RosterChar, TargetSpec};
 use turnrush_core::formation::{Formation4v4, FormationMods, Outcome};
 use turnrush_core::rng::Rng;
 
@@ -64,6 +67,10 @@ const FLASH_SECS: f32 = 0.3;
 pub enum GameState {
     #[default]
     Menu,
+    /// Tela de regras/controles ("Como Jogar").
+    ComoJogar,
+    /// Visualizador do elenco completo (16 cartas, esboço).
+    Elenco,
     Draft,
     Battle,
     Reward,
@@ -140,6 +147,10 @@ pub struct ShotOpts {
 enum ShotPhase {
     Menu,
     MenuSalvo,
+    Ajuda,
+    AjudaSalvo,
+    Elenco,
+    ElencoSalvo,
     Draft,
     DraftSalvo,
     Batalha,
@@ -169,6 +180,8 @@ pub struct MenuBtn(pub MenuAction);
 pub enum MenuAction {
     Play,
     Again,
+    Help,
+    Elenco,
     Exit,
 }
 
@@ -224,6 +237,147 @@ pub enum RewardKind {
 
 #[derive(Component)]
 pub struct GameOverText;
+
+/// Botão "Voltar" (telas Como Jogar e Elenco).
+#[derive(Component)]
+pub struct BackBtn;
+
+/// Botão de aceleração do playback (batalha).
+#[derive(Component)]
+pub struct SpeedBtn;
+
+/// Rótulo do botão de aceleração.
+#[derive(Component)]
+pub struct SpeedLabel;
+
+/// Playback acelerado (toggle do botão Acelerar; 6× a velocidade base).
+#[derive(Resource, Default)]
+pub struct FastForward(pub bool);
+
+/// Conteúdo da tela "Como Jogar" — regras FIÉIS ao engine (formation.rs).
+const AJUDA: [(&str, &str); 7] = [
+    (
+        "1 · DRAFT — 8 cartas na mesa, escolha 4",
+        "A oferta é a mesma para os dois lados (simetria por construção).\nA IA monta o time inimigo entre os personagens restantes do elenco.",
+    ),
+    (
+        "2 · BATALHA 4v4 POR TURNOS",
+        "Turnos alternados A-B-A-B por posição; quem abre a 1ª rodada é sorteado.\nMystery tem custo de chakra e cooldown — sem chakra, age o ataque padrão.\nChakra: 20 inicial · +12 por rodada · teto 100 (passivas podem dar mais).",
+    ),
+    (
+        "3 · CADEIAS DE COMBO (estilo Naruto Online)",
+        "Mysteries e ataques aplicam estados: Lançamento, Empurrão e Derrubada.\nAliados com perseguição (chase) de gatilho compatível encadeiam golpes\nno mesmo turno — até 12 elos por cadeia, 1 chase por unidade por rodada.",
+    ),
+    (
+        "4 · PASSIVAS E DANO CONTÍNUO",
+        "Cada carta tem uma passiva sempre ativa (reflexo, cura de rodada, chakra\nextra, bônus contra estados…). Queimadura/Veneno: 10% do ATK do aplicador\npor rodada, durante 2 rodadas, sem acumular.",
+    ),
+    (
+        "5 · RECOMPENSA E ESCALADA",
+        "Vitória → escolha: +10% dano · +10% vida · Equilíbrio +5%/+5%.\nO próximo inimigo escala +11% de dano e +7% de vida POR VITÓRIA sua.\n3 vitórias completam a run; uma derrota encerra (roguelike).",
+    ),
+    (
+        "6 · FACÇÕES E BALANCEAMENTO",
+        "Ember, Tide, Verdant e Storm dão identidade — NÃO existe contador duro\nentre facções. O calibrador DWC v2 mantém todas as composições em ~50%\nde winrate médio: a vantagem vem da sua leitura do confronto.",
+    ),
+    (
+        "7 · CONTROLES (modo offline)",
+        "Tudo no mouse. Na batalha, o botão Acelerar (canto direito) alterna o\nplayback entre 1× e 6×. Tudo roda local — a IA adversária é a mesma\nheurística validada pelo simulador Monte Carlo.",
+    ),
+];
+
+fn rotulo_alvo(t: TargetSpec) -> &'static str {
+    match t {
+        TargetSpec::EnemiesFront => "frente",
+        TargetSpec::EnemiesAll => "todos",
+        TargetSpec::AllySingle => "aliado",
+        TargetSpec::SelfTarget => "si",
+        TargetSpec::Random2 => "2 aleatórios",
+    }
+}
+
+fn estado(s: ComboState) -> String {
+    if s == ComboState::None {
+        String::new()
+    } else {
+        format!(" · {}", s.label())
+    }
+}
+
+fn chase_line(c: &RosterChar) -> String {
+    if c.chase.trigger == ComboState::None || c.chase.max_per_round == 0 {
+        "C: —".to_string()
+    } else {
+        format!(
+            "C: {} · gatilho {} · {}% · {}×/rodada",
+            c.chase.name,
+            c.chase.trigger.label(),
+            c.chase.damage_pct,
+            c.chase.max_per_round
+        )
+    }
+}
+
+/// Carta do elenco: identidade + kit completo (esboço textual).
+fn spawn_elenco_card(grid: &mut ChildSpawnerCommands, c: &RosterChar) {
+    let fac = c.faction.as_str();
+    grid.spawn((
+        Node {
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(3.0),
+            padding: UiRect::all(Val::Px(9.0)),
+            border: UiRect::all(Val::Px(2.0)),
+            border_radius: BorderRadius::all(Val::Px(8.0)),
+            overflow: Overflow::clip(),
+            ..default()
+        },
+        BackgroundColor(PANEL),
+        BorderColor::all(faction_color(fac)),
+    ))
+    .with_children(|p| {
+        p.spawn((
+            Text::new(c.name.clone()),
+            TextFont { font_size: FontSize::Px(16.0), ..default() },
+            TextColor(TXT),
+        ));
+        p.spawn((
+            Text::new(format!("{fac} · {}", c.role.as_str())),
+            TextFont { font_size: FontSize::Px(11.0), ..default() },
+            TextColor(faction_color(fac)),
+        ));
+        p.spawn((
+            Text::new(format!(
+                "HP {} · ATQ {} · DEF {} · VEL {}",
+                c.hp, c.attack, c.defense, c.speed
+            )),
+            TextFont { font_size: FontSize::Px(11.0), ..default() },
+            TextColor(TXT_DIM),
+        ));
+        p.spawn((
+            Text::new(format!(
+                "M: {} · {}% · chakra {} · cd {} · {}{}",
+                c.mystery.name,
+                c.mystery.damage_pct,
+                c.mystery.chakra,
+                c.mystery.cooldown,
+                rotulo_alvo(c.mystery.targets),
+                estado(c.mystery.applies_state)
+            )),
+            TextFont { font_size: FontSize::Px(10.0), ..default() },
+            TextColor(AMBER),
+        ));
+        p.spawn((
+            Text::new(chase_line(c)),
+            TextFont { font_size: FontSize::Px(10.0), ..default() },
+            TextColor(TXT_DIM),
+        ));
+        p.spawn((
+            Text::new(format!("P: {} — {}", c.passive.name, c.passive.effect)),
+            TextFont { font_size: FontSize::Px(10.0), ..default() },
+            TextColor(TXT_DIM),
+        ));
+    });
+}
 
 // Cores do tema (sem azul/indigo — âmbar × rosa; facção na borda)
 const BG: Color = Color::srgb(0.075, 0.075, 0.11);
@@ -284,6 +438,7 @@ pub fn run(shot: Option<ShotOpts>) {
         .insert_resource(ClearColor(BG))
         .insert_resource(new_run())
         .init_resource::<DraftRes>()
+        .init_resource::<FastForward>()
         .insert_resource(new_playback_placeholder())
         .add_systems(
             Startup,
@@ -298,7 +453,7 @@ pub fn run(shot: Option<ShotOpts>) {
                 }
             }),
         )
-        .add_systems(Update, (sync_root_visibility, shot_tick))
+        .add_systems(Update, (sync_root_visibility, shot_tick, back_click, speed_click))
         // Menu
         .add_systems(Update, menu_interactions.run_if(in_state(GameState::Menu)))
         // Draft
@@ -406,6 +561,8 @@ fn shot_tick(
     st.timer -= time.delta_secs();
 
     let menu_png = variante(&st.base, "_menu");
+    let ajuda_png = variante(&st.base, "_como-jogar");
+    let elenco_png = variante(&st.base, "_elenco");
     let draft_png = variante(&st.base, "_draft");
     let batalha_png = variante(&st.base, "_battle");
     let logger = turnrush_core::logger::kv;
@@ -426,6 +583,32 @@ fn shot_tick(
             st.phase = ShotPhase::MenuSalvo;
         }
         ShotPhase::MenuSalvo if gravado(&menu_png) || st.timer <= 0.0 => {
+            next.set(GameState::ComoJogar);
+            st.timer = 1.2;
+            st.phase = ShotPhase::Ajuda;
+        }
+        ShotPhase::Ajuda if st.timer <= 0.0 => {
+            cmds
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk(ajuda_png.clone()));
+            logger(info, "screenshot", "captura disparada", &[("path", s(&ajuda_png))]);
+            st.timer = 5.0;
+            st.phase = ShotPhase::AjudaSalvo;
+        }
+        ShotPhase::AjudaSalvo if gravado(&ajuda_png) || st.timer <= 0.0 => {
+            next.set(GameState::Elenco);
+            st.timer = 1.2;
+            st.phase = ShotPhase::Elenco;
+        }
+        ShotPhase::Elenco if st.timer <= 0.0 => {
+            cmds
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk(elenco_png.clone()));
+            logger(info, "screenshot", "captura disparada", &[("path", s(&elenco_png))]);
+            st.timer = 5.0;
+            st.phase = ShotPhase::ElencoSalvo;
+        }
+        ShotPhase::ElencoSalvo if gravado(&elenco_png) || st.timer <= 0.0 => {
             next.set(GameState::Draft);
             st.timer = 1.2;
             st.phase = ShotPhase::Draft;
@@ -579,14 +762,123 @@ fn setup_roots(mut cmds: Commands) {
                     TextColor(TXT_DIM),
                 ));
                 btn(p, "Jogar", 340.0, MenuBtn(MenuAction::Play));
+                btn(p, "Como Jogar", 340.0, MenuBtn(MenuAction::Help));
+                btn(p, "Elenco", 340.0, MenuBtn(MenuAction::Elenco));
                 btn(p, "Sair", 340.0, MenuBtn(MenuAction::Exit));
                 p.spawn((
-                    Text::new("engine determinística em Rust · logs em ~/TurnRush/logs"),
+                    Text::new(format!(
+                        "v{} · engine determinística em Rust · logs em ~/TurnRush/logs",
+                        env!("CARGO_PKG_VERSION")
+                    )),
                     TextFont { font_size: FontSize::Px(14.0), ..default() },
+                    TextColor(TXT_DIM),
+                ));
+                p.spawn((
+                    Text::new("modo offline — adversário controlado pela IA do engine"),
+                    TextFont { font_size: FontSize::Px(13.0), ..default() },
                     TextColor(TXT_DIM),
                 ));
             });
         });
+
+    // ── Como Jogar ──
+    cmds.spawn((
+        node_full(),
+        StateRoot(GameState::ComoJogar),
+        BackgroundColor(BG),
+        Visibility::Hidden,
+    ))
+    .with_children(|p| {
+        p.spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                padding: UiRect::all(Val::Px(22.0)),
+                row_gap: Val::Px(12.0),
+                ..default()
+            },
+        ))
+        .with_children(|p| {
+            p.spawn((
+                Text::new("COMO JOGAR"),
+                TextFont { font_size: FontSize::Px(32.0), ..default() },
+                TextColor(AMBER),
+            ));
+            p.spawn((
+                Node {
+                    width: Val::Px(1040.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(9.0),
+                    ..default()
+                },
+            ))
+            .with_children(|p| {
+                for (titulo, corpo) in AJUDA {
+                    p.spawn((
+                        Text::new(titulo),
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
+                        TextColor(TXT),
+                    ));
+                    p.spawn((
+                        Text::new(corpo),
+                        TextFont { font_size: FontSize::Px(14.0), ..default() },
+                        TextColor(TXT_DIM),
+                    ));
+                }
+            });
+            btn(p, "Voltar", 240.0, BackBtn);
+        });
+    });
+
+    // ── Elenco (esboço do roster completo — a arte/nomes finais vêm depois) ──
+    let elenco = load_roster_embedded();
+    cmds.spawn((
+        node_full(),
+        StateRoot(GameState::Elenco),
+        BackgroundColor(BG),
+        Visibility::Hidden,
+    ))
+    .with_children(|p| {
+        p.spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                padding: UiRect::all(Val::Px(14.0)),
+                row_gap: Val::Px(8.0),
+                ..default()
+            },
+        ))
+        .with_children(|p| {
+            p.spawn((
+                Text::new(format!(
+                    "ELENCO — {} cartas (esboço: nomes, artes e números provisórios)",
+                    elenco.len()
+                )),
+                TextFont { font_size: FontSize::Px(24.0), ..default() },
+                TextColor(TXT),
+            ));
+            p.spawn((
+                Node {
+                    display: Display::Grid,
+                    grid_template_columns: RepeatedGridTrack::px(4, 292.0),
+                    grid_auto_rows: GridTrack::px(142.0),
+                    column_gap: Val::Px(10.0),
+                    row_gap: Val::Px(10.0),
+                    ..default()
+                },
+            ))
+            .with_children(|grid| {
+                for c in &elenco.characters {
+                    spawn_elenco_card(grid, c);
+                }
+            });
+            btn(p, "Voltar", 240.0, BackBtn);
+        });
+    });
 
     // ── Draft ──
     cmds.spawn((node_full(), StateRoot(GameState::Draft), BackgroundColor(BG), Visibility::Hidden))
@@ -649,6 +941,34 @@ fn setup_roots(mut cmds: Commands) {
             ))
             .with_children(|p| {
                 p.spawn((BattleHeader, Text::new("Batalha"), TextFont { font_size: FontSize::Px(26.0), ..default() }, TextColor(TXT)));
+                // botão Acelerar (canto direito do header)
+                let lbl = p
+                    .spawn((
+                        SpeedLabel,
+                        Text::new("Acelerar ▶"),
+                        TextFont { font_size: FontSize::Px(14.0), ..default() },
+                        TextColor(TXT_DIM),
+                    ))
+                    .id();
+                p.spawn((
+                    Interaction::default(),
+                    SpeedBtn,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        right: Val::Px(24.0),
+                        top: Val::Px(4.0),
+                        width: Val::Px(160.0),
+                        height: Val::Px(34.0),
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        border: UiRect::all(Val::Px(1.5)),
+                        border_radius: BorderRadius::all(Val::Px(8.0)),
+                        ..default()
+                    },
+                    BackgroundColor(PANEL),
+                    BorderColor::all(TXT_DIM),
+                ))
+                .add_child(lbl);
             });
             p.spawn((
                 Node {
@@ -814,6 +1134,8 @@ fn menu_interactions(
         }
         match b.0 {
             MenuAction::Play => state.set(GameState::Draft),
+            MenuAction::Help => state.set(GameState::ComoJogar),
+            MenuAction::Elenco => state.set(GameState::Elenco),
             MenuAction::Again => {
                 cmds.insert_resource(new_run());
                 state.set(GameState::Draft);
@@ -938,6 +1260,12 @@ fn build_battle(run: &mut RunRes, pb: &mut PlaybackRes) {
         hp_permille: 1000 + (run.wins as i32) * 70,
     };
     let mut f = Formation4v4::new_with_mods(&run.roster, a, b, seed, run.mods, enemy_mods);
+    // IA adversária: ordem de movimento sorteada por batalha — cada confronto
+    // ganha variância tática real (a ordem do jogador continua sendo a do
+    // draft; UI de ordem configurável fica para a v0.6).
+    let mut ordem_ia = [0usize, 1, 2, 3];
+    run.rng.shuffle(&mut ordem_ia);
+    f.set_orders([0, 1, 2, 3], ordem_ia);
     f.set_log(true);
     let outcome = f.run();
     let chains = f.chain_links();
@@ -1058,9 +1386,12 @@ fn apply_event(pb: &mut PlaybackRes, ev: &ParsedEvent, log: &mut String) {
     }
 }
 
+/// Playback dos eventos da batalha (barras, log, flashes, velocidade).
+#[allow(clippy::too_many_arguments)] // sistemas Bevy recebem todos os params
 fn battle_playback(
     time: Res<Time>,
     mut cmds: Commands,
+    ff: Res<FastForward>,
     mut pb: ResMut<PlaybackRes>,
     mut log: Query<&mut Text, With<BattleLogText>>,
     mut header: Query<&mut Text, (With<BattleHeader>, Without<BattleLogText>)>,
@@ -1129,7 +1460,61 @@ fn battle_playback(
             }
         }
     }
-    pb.wait = if ev.kind == EvKind::Round { ROUND_SECS } else { STEP_SECS };
+    let (passo, rodada) = if ff.0 {
+        (STEP_SECS / 6.0, ROUND_SECS / 6.0)
+    } else {
+        (STEP_SECS, ROUND_SECS)
+    };
+    pb.wait = if ev.kind == EvKind::Round { rodada } else { passo };
+}
+
+/// Botão "Voltar" — volta ao menu a partir de Como Jogar ou Elenco.
+fn back_click(
+    state: Res<State<GameState>>,
+    mut next: ResMut<NextState<GameState>>,
+    q: Query<&Interaction, (With<BackBtn>, Changed<Interaction>)>,
+) {
+    if !matches!(state.get(), GameState::ComoJogar | GameState::Elenco) {
+        return;
+    }
+    for inter in q.iter() {
+        if *inter == Interaction::Pressed {
+            next.set(GameState::Menu);
+        }
+    }
+}
+
+/// Botão "Acelerar" — alterna o playback entre 1× e 6×.
+fn speed_click(
+    state: Res<State<GameState>>,
+    mut ff: ResMut<FastForward>,
+    q: Query<&Interaction, (With<SpeedBtn>, Changed<Interaction>)>,
+    mut label: Query<&mut Text, With<SpeedLabel>>,
+) {
+    if *state.get() != GameState::Battle {
+        return;
+    }
+    for inter in q.iter() {
+        if *inter == Interaction::Pressed {
+            ff.0 = !ff.0;
+            if let Ok(mut t) = label.single_mut() {
+                *t = if ff.0 {
+                    Text::new("Acelerando 6× ▶▶")
+                } else {
+                    Text::new("Acelerar ▶")
+                };
+            }
+            turnrush_core::logger::kv(
+                turnrush_core::logger::Level::Info,
+                "playback_speed",
+                "velocidade do playback alterada",
+                &[(
+                    "acelerado",
+                    turnrush_core::logger::V::S(if ff.0 { "6x" } else { "1x" }),
+                )],
+            );
+        }
+    }
 }
 
 fn flash_decay(
@@ -1264,7 +1649,7 @@ fn gameover_click(
                 cmds.insert_resource(new_run());
                 state.set(GameState::Draft);
             }
-            MenuAction::Play | MenuAction::Exit => {
+            MenuAction::Play | MenuAction::Help | MenuAction::Elenco | MenuAction::Exit => {
                 turnrush_core::logger::shutdown();
                 exit.write(AppExit::Success);
             }

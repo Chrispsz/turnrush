@@ -324,6 +324,30 @@ impl Formation4v4 {
         self.log = on;
     }
 
+    /// Define a **ordem de movimento** (1º..4º) dos dois lados.
+    ///
+    /// A ordem é uma escolha tática do design (docs/GDD.md): quem age antes
+    /// decide foco de fogo e timing de mystery. O simulador Monte Carlo amostra
+    /// ordens por batalha (distribuição de escolhas dos jogadores) para que o
+    /// winrate meça a média sobre táticas — sem isso, batalhas determinísticas
+    /// quantizam o winrate em 0/0.5/1 e a calibração persegue ruído.
+    ///
+    /// Ordem inválida (não é permutação de 0..4) é ignorada silenciosamente
+    /// (fallback: ordem padrão dos slots).
+    pub fn set_orders(&mut self, a: [usize; FORMATION_SIZE], b: [usize; FORMATION_SIZE]) {
+        let valida = |o: &[usize; FORMATION_SIZE]| -> bool {
+            let mut v = *o;
+            v.sort_unstable();
+            v == [0, 1, 2, 3]
+        };
+        if valida(&a) {
+            self.sides[0].order = a;
+        }
+        if valida(&b) {
+            self.sides[1].order = b;
+        }
+    }
+
     /// Log de eventos legível da batalha (preenchido se `set_log(true)`).
     pub fn events(&self) -> &[String] {
         &self.events
@@ -503,12 +527,19 @@ impl Formation4v4 {
     }
 
     /// Ação da unidade: mystery se pronta, senão ataque padrão.
+    ///
+    /// **Jitter de timing**: 1/4 de chance de segurar a mystery por um turno
+    /// (semeado, simétrico para os dois lados). Modela a imperfeição humana de
+    /// timing do Naruto Online e dá variância real às batalhas — sem isso,
+    /// táticas determinísticas tornam confrontos categóricos (wr 0.000/1.000)
+    /// e o Monte Carlo não tem o que medir.
     fn act(&mut self, side_idx: usize, slot: usize) {
         let ready = {
             let u = &self.sides[side_idx].units[slot];
             u.mcd == 0 && u.chakra >= u.mystery.chakra && u.mystery.chakra > 0
         };
-        if ready {
+        let segura = ready && self.rng.range(4) == 0;
+        if ready && !segura {
             self.cast_mystery(side_idx, slot);
         } else {
             self.standard_attack(side_idx, slot);
@@ -801,6 +832,24 @@ pub fn quick_battle_mods(
     mods_b: FormationMods,
 ) -> Outcome {
     let mut bt = Formation4v4::new_with_mods(roster, a, b, seed, mods_a, mods_b);
+    bt.run()
+}
+
+/// Igual a [`quick_battle_mods`] com **ordens de movimento** explícitas por
+/// lado (escolha tática; ver [`Formation4v4::set_orders`]).
+#[allow(clippy::too_many_arguments)] // construtor de batalha do Monte Carlo
+pub fn quick_battle_mods_orders(
+    roster: &Roster,
+    a: [usize; 4],
+    b: [usize; 4],
+    seed: u64,
+    mods_a: FormationMods,
+    mods_b: FormationMods,
+    order_a: [usize; 4],
+    order_b: [usize; 4],
+) -> Outcome {
+    let mut bt = Formation4v4::new_with_mods(roster, a, b, seed, mods_a, mods_b);
+    bt.set_orders(order_a, order_b);
     bt.run()
 }
 

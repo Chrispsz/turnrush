@@ -1,0 +1,112 @@
+# Changelog — TurnRush
+
+Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/);
+versões seguem [SemVer](https://semver.org/lang/pt-BR/). O jogo está em
+**fase de mecânica**: arte/sprites/nomes finais são esboços conscientes.
+
+## [0.5.0] — mecânica + menu funcional + documentação completa
+
+### Adicionado
+- **Menu mais funcional**: telas **Como Jogar** (regras fiéis à engine:
+  draft, turnos A-B-A-B, chakra, cadeias de combo, passivas, recompensas,
+  escalada, facções) e **Elenco** (as 16 cartas com kit completo — mystery,
+  padrão, chase, passiva, stats), com botão Voltar.
+- **Botão Acelerar (1×/6×)** no playback da batalha — testar runs fica 6×
+  mais rápido quando quiser.
+- **Modo `--shot` estendido**: captura 5 telas (menu, como-jogar, elenco,
+  draft, batalha) — insumo direto da galeria do site.
+- **Documentação baseada na engine**: `docs/PERSONAGENS.md` (16 personagens
+  do contrato v2 + 12 do modo 1v1, gerados do código) e `docs/CARTAS.md`
+  (draft de formação, recompensas, escalada, os 16 Contratos, LCE, DWC);
+  README e GDD/ARQUITETURA reescritos para "como funciona hoje"; CHANGELOG.
+- Versão exibida no menu principal; nota "modo offline — adversário IA".
+
+### Mudado
+- README agora documenta o jogo jogável (não só a engine) e aponta para as
+  releases.
+
+### Corrigido (mecânica — contadores categóricos entre facções)
+- **Causa raiz**: batalhas 4v4 quase determinísticas (só a moeda de abertura
+  variava) quantizavam winrates em 0.000/0.500/1.000 e faziam a calibração
+  oscilar; times de facção pura eram contadores duros (Ember>Verdant>Storm>
+  Ember; Tide perdia de todos).
+- **Ordem de movimento amostrada por batalha** no Monte Carlo
+  (`set_orders`/`quick_battle_mods_orders`) e na IA do jogo — o winrate passa
+  a medir a média sobre escolhas táticas (ordem = decisão de design; UI v0.6).
+- **Jitter de timing de mystery (1/4 por turno)** na engine — variância
+  simétrica e semeada; batalhas do jogo ficam menos robóticas.
+- **DWC 4v4 reforçado** (fase 1 ±550‰/±400‰; fase 2 passos maiores, clamp
+  ±520‰/±320‰). Gate 4v4: desvio médio 0.214 → **0.077 ≤ 0.15 — PASSOU**
+  (meta v0.4/v0.5 cumprida); pares categóricos restantes listados como alvo
+  de redesign de roster.
+
+## [0.4.1] — correção da janela em branco
+
+### Corrigido
+- Janela abria 100% em branco no Linux/KDE — **três causas somadas**, todas
+  invisíveis no `--check` headless: falta de `Camera2d`, falta da feature
+  `bevy_ui_render` (o render da UI virou crate separado no Bevy 0.20) e
+  queries de `Text` sobrepostas que panicavam ao entrar na batalha.
+- Fonte default do Bevy (subset ASCII) trocada por DejaVu Sans Mono embutida
+  — acentos pt-BR renderizam.
+
+### Adicionado
+- Modo de diagnóstico `--shot <base>` (menu → draft → batalha, PNGs reais)
+  e ambiente de repro sem GPU (Xvfb + lavapipe) para validar visual no CI.
+
+## [0.4.0] — o JOGO 2D de verdade (Bevy)
+
+### Adicionado
+- Novo crate **turnrush-game** (Bevy 0.20): janela 1280×720, menu clicável,
+  draft visual (escolha 4 de 8 cartas), batalha 4v4 com playback animado da
+  engine (barras de HP com HP real do roster, flashes de dano, log de
+  combate), recompensas (+10% dano / +10% vida / equilíbrio), escalada de
+  inimigos por vitória, fim de run (3 vitórias).
+- Roster embutido no binário (16 personagens); zero assets externos.
+- AppImage passa a abrir o JOGO (Exec=turnrush-game); o sim musl vai embutido
+  e roteado pelo AppRun.
+
+### Corrigido
+- `turnrush-sim` sem argumentos agora mostra ajuda e sai (não satura CPU com
+  calibração); nova flag `--threads` (default educado: min(cpus, 4)).
+
+## [0.3.1] — logs cobrem TODAS as formas de término
+
+### Adicionado
+- Captura de SIGINT/SIGTERM/SIGHUP no logger (zero dependências: self-pipe +
+  thread monitora): evento `session_interrupted` + exit 128+sig. Valores de
+  tempo migrados para inteiros (contrato do parser).
+
+### Corrigido
+- Sessões interrompidas (Ctrl+C/fechar terminal) agora registradas — gap
+  encontrado analisando logs reais da máquina do usuário (chris-pc/CachyOS).
+
+## [0.3.0] — Formação 4v4, roster data-driven, logs de sessão
+
+### Adicionado
+- **Modo Formação 4v4** (`formation.rs`): formação 2×2, ordem de movimento,
+  cadeias de perseguição estilo Naruto Online (arremesso/empurrão/derrubada),
+  mysteries com chakra/cooldown, passivas, DoT.
+- **Contrato JSON v2** para rosters (`Roster::from_json`, validação com erro
+  por campo) + `data/roster/roster-v2.json` (16 personagens, 4 facções).
+- **Logs de sessão completos**: `~/TurnRush/logs` (.log + .jsonl, cabeçalho de
+  ambiente, crash report em panic, retenção 20).
+- Calibração 4v4 no simulador (por composição + por confronto) e gate próprio.
+
+## [0.2.0] — DWC v2 e gates de CI
+
+### Adicionado
+- **DWC v2**: calibração em 2 fases (composição → confronto) sobre Monte Carlo
+  de TODAS as composições (C(12,3) = 220 → 48.180 confrontos), passada de
+  verificação em seeds novos, relatório JSON.
+- Gates de equilíbrio no CI; diagnóstico automático de hard counters.
+- Repositório remoto + GitHub Actions (testes + gate + build Linux).
+
+## [0.1.0] — motor determinístico
+
+### Adicionado
+- Workspace Rust com **zero dependências externas**: RNG xoshiro256**,
+  combate por turnos 1v1 (alternância A-B-A-B, energia/chakra, cooldowns,
+  launch/chase, status, febre de batalha, juízo anti-turtle), draft simétrico
+  com LCE, partida de 9 rodadas, roster v0.1 (12 personagens), simulador CLI,
+  21 testes.

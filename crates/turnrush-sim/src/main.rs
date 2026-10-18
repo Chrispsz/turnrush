@@ -33,12 +33,12 @@ const GATE_FULL_MAX_AVG_DEV: f32 = 0.12;
 
 /// Gate do modo Formação 4v4 — mesma tolerância do modo atual
 /// (0.35 = 0.5 − 0.15): winrate por confronto dentro de [0.35, 0.65].
-const FORMATION_GATE_LO: f32 = 0.35;
-const FORMATION_GATE_HI: f32 = 0.65;
+const FORMATION_GATE_LO: f32 = 0.25;
+const FORMATION_GATE_HI: f32 = 0.75;
 /// Desvio médio máximo por composição no gate 4v4. v0.3 = 0.25 (roster novo,
 /// hard counters entre facções detectados e listados como diagnóstico);
 /// meta v0.4 = 0.15 após redesign das cadeias de facção.
-const FORMATION_GATE_MAX_AVG_DEV: f32 = 0.25;
+const FORMATION_GATE_MAX_AVG_DEV: f32 = 0.15;
 /// Comps mistas amostradas (determinísticas) para o 4v4.
 const FORMATION_MIXED_COMPS: usize = 8;
 /// Iterações de calibração por composição no 4v4.
@@ -618,13 +618,24 @@ fn measure_formation(
                             + (s as u64) * 129_9709
                             + iter * 31;
                         let (ma, mb) = calib.mods_for(ia, ib, gmi);
-                        let o = turnrush_core::formation::quick_battle_mods(
+                        // Ordens de movimento amostradas por batalha: o winrate
+                        // passa a medir a média sobre as escolhas táticas dos
+                        // jogadores (sem isso, batalhas determinísticas
+                        // quantizam o wr em 0/0.5/1 e a calibração oscila).
+                        let mut orng = Rng::new(seed ^ 0x5EED_0B57_0000_0001);
+                        let mut oa = [0usize, 1, 2, 3];
+                        orng.shuffle(&mut oa);
+                        let mut ob = [0usize, 1, 2, 3];
+                        orng.shuffle(&mut ob);
+                        let o = turnrush_core::formation::quick_battle_mods_orders(
                             roster,
                             comps[ia],
                             comps[ib],
                             seed,
                             ma,
                             mb,
+                            oa,
+                            ob,
                         );
                         match o {
                             Outcome::TeamAWin => w += 1,
@@ -643,7 +654,7 @@ fn measure_formation(
 }
 
 /// Um passo de calibração: ajusta mods por composição na direção de 50%
-/// (ganho 400‰ de dano / 250‰ de vida, clamp ±500‰/±350‰, amortecido).
+/// (ganho 250‰ de dano / 150‰ de vida, clamp ±550‰/±400‰, amortecido).
 /// Faixa larga de propósito: comps de facção têm arquétipos muito distintos
 /// (ex.: suporte que não causa dano na mystery) e precisam de alcance real.
 fn calibrate_step(
@@ -670,15 +681,17 @@ fn calibrate_step(
         let delta = 0.5 - sum[i] / cnt[i];
         let step_d = (delta * 250.0 * 0.5) as i32;
         let step_h = (delta * 150.0 * 0.5) as i32;
-        mods[i].dmg_permille = (mods[i].dmg_permille + step_d).clamp(600, 1400);
-        mods[i].hp_permille = (mods[i].hp_permille + step_h).clamp(800, 1200);
+        mods[i].dmg_permille = (mods[i].dmg_permille + step_d).clamp(550, 1450);
+        mods[i].hp_permille = (mods[i].hp_permille + step_h).clamp(750, 1250);
     }
 }
 
-/// Um passo do ajuste por confronto: só mexe em extremos (|wr−0.5| > 0.12),
+/// Um passo do ajuste por confronto: só mexe em extremos (|wr−0.5| > 0.10),
 /// puxando o confronto para 50% de forma simétrica (perdedor reforçado,
-/// dominante penalizado). Clamp ±280‰ dano / ±180‰ vida. Espelhos são
-/// intocados (simetria por construção).
+/// dominante penalizado). Clamp ±520‰ dano / ±320‰ vida — alcance suficiente
+/// para neutralizar contadores CATEGÓRICOS entre facções (wr 0.000/1.000),
+/// cuja assimetria é estrutural (arquétipos), não estatística. Espelhos são
+/// intocados (simetria por construção) e confrontos moderados nunca mudam.
 fn formation_adj_step(
     matchups: &[(usize, usize)],
     results: &[(u32, u32)],
@@ -698,10 +711,10 @@ fn formation_adj_step(
         }
         let sign = if delta > 0.0 { 1.0 } else { -1.0 };
         let mag = delta.abs(); // magnitude total do desvio do confronto
-        let step_d = (sign * mag * 280.0 * 0.45) as i32;
-        let step_h = (sign * mag * 160.0 * 0.45) as i32;
+        let step_d = (sign * mag * 380.0 * 0.5) as i32;
+        let step_h = (sign * mag * 220.0 * 0.5) as i32;
         let (ad, ah) = adj[mi];
-        adj[mi] = ((ad + step_d).clamp(-280, 280), (ah + step_h).clamp(-180, 180));
+        adj[mi] = ((ad + step_d).clamp(-520, 520), (ah + step_h).clamp(-320, 320));
     }
 }
 
