@@ -21,6 +21,14 @@
     <binary>turnrush-game</binary>
   </provides>
   <releases>
+    <release version="0.7.1" date="2026-10-19">
+      <description>
+        <p>Resposta ao playtest: modo manual corrigido (painel não perde mais
+        a escolha de alvo), ataque padrão com alvo automático espelhado,
+        log de batalha enxuto e TÁTICAS a cada 2 rodadas — o roguelike agora
+        acontece dentro da batalha, com o inimigo escolhendo em silêncio.</p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-10-17">
       <description>
         <p>PRIMEIRA VERSÃO JOGÁVEL: cliente visual 2D (Bevy 0.20) com menu,

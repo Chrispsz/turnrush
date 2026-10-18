@@ -432,7 +432,7 @@ const AJUDA: [(&str, &str); 7] = [
     ),
     (
         "2 · BATALHA 4v4 (VOCÊ COMANDA TUDO)",
-        "Timeline visível (SPD); A-B intercalado; quem abre a 1ª rodada é sorteado.\nPainel de comando: Padrão [1] grátis (⚡+15) · Skill [2] ⚡30/CD 2 ·\nMystery [3] ⚡60/CD 3 (destrava R2/R3 por papel) · Interrupt [4] ⚡35/CD 3.\nFluxo: +10/rodada, teto 100. Prévia EXATA antes de confirmar.\nMáximo de 10 rodadas — desempate por % de vida.",
+        "Timeline visível (SPD); A-B intercalado; quem abre a 1ª rodada é sorteado.\nPainel de comando: Padrão [1] grátis (⚡+15) · Skill [2] ⚡30/CD 2 ·\nMystery [3] ⚡60/CD 3 (destrava R2/R3 por papel) · Interrupt [4] ⚡35/CD 3.\nO PADRÃO tem alvo automático: mira o inimigo na sua frente (1↔1, 2↔2…;\ncaiu, o primeiro vivo da frente) — dispara direto, sem fila de alvos.\nAlvo manual só em poder focado (cura aliada/interrupt). Fluxo: +10/rodada,\nteto 100. Prévia EXATA antes de confirmar. Máximo de 10 rodadas —\ndesempate por % de vida.",
     ),
     (
         "3 · CHAIN COMBOS — PERSEGUIÇÃO MANUAL",
@@ -443,8 +443,8 @@ const AJUDA: [(&str, &str); 7] = [
         "Os 4 Tacticians têm Interrupt: atordoam ou silenciam um inimigo que AINDA\nvai agiar nesta rodada. O jogo NÃO avisa — leia a timeline e o ⚡ do inimigo\n(mostrado dos dois lados). Atordoado perde a ação; silenciado não conjura.",
     ),
     (
-        "5 · CARTAS ENTRE BATALHAS (ROGUELIKE)",
-        "Vitória → escolha 1 de 3 cartas (Equipe/Unidade/Tática) — 1 reroll por\nbatalha. Raridades + preferência de clã. Teto de poder da run: +30%.\nA 3ª batalha é o BOSS. 3 vitórias completam a run.",
+        "5 · TÁTICAS E CARTAS (ROGUELIKE)",
+        "A cada 2 rodadas (2/4/6/8) o jogo pausa: adote 1 de 2 TÁTICAS de\nbatalha [1]/[2] — efeito até o fim da batalha. O inimigo escolhe a dele\nem silêncio (mesma força, zero pista). Vitória → 1 de 3 cartas de RUN\n(Equipe/Unidade/Tática) — 1 reroll por batalha. Teto de poder da run:\n+30%. A 3ª batalha é o BOSS. 3 vitórias completam a run.",
     ),
     (
         "6 · CLÃS E BALANCEAMENTO",
@@ -452,7 +452,7 @@ const AJUDA: [(&str, &str); 7] = [
     ),
     (
         "7 · CONTROLES DA BATALHA",
-        "MOUSE: clique nas ações e nos alvos. TECLADO: [1]-[4] ações · Q/W/E/R\nalvo inimigo · A/S/D/F alvo aliado · ENTER confirma/auto-alvo/persegue ·\nESC cancela/recusa · ESPAÇO 2× · Z modo Auto (IA joga por você).\nA IA inimiga usa EXATAMENTE as mesmas informações que você.",
+        "MOUSE: clique na ação — o Padrão dispara direto (alvo automático);\npoderes focados abrem a fila de alvos. TECLADO: [1]-[4] ações · Q/W/E/R\nalvo inimigo · A/S/D/F alvo aliado · ENTER confirma/auto-alvo/persegue ·\nESC cancela/recusa · ESPAÇO 2× · Z modo Auto (IA joga por você).\nA IA inimiga usa EXATAMENTE as mesmas informações que você.",
     ),
 ];
 

@@ -12,7 +12,7 @@ e balanceamento Monte Carlo (DWC/LCE).
 |---|---|
 | **Download** | [Releases (AppImage)](https://github.com/Chrispsz/turnrush/releases/latest) |
 | **Docs** | [GDD](docs/GDD.md) · [Arquitetura](docs/ARQUITETURA.md) · [Personagens](docs/PERSONAGENS.md) · [Cartas](docs/CARTAS.md) · [Nomenclatura](docs/NAMING.md) · [Logs](docs/LOGS.md) |
-| **Status** | v0.7.0 — modo interativo completo (fluxo, tiers, interrupt, chase manual, cartas roguelike, boss), 90 testes, clippy limpo |
+| **Status** | v0.7.1 — modo interativo polido pelo playtest (alvo automático do básico, táticas a cada 2 rodadas, log enxuto), 95 testes, clippy limpo |
 
 ## O que é
 
@@ -24,7 +24,7 @@ batalhas 4v4 com **cadeias de combo** (Lançamento → Empurrão → Derrubada),
 equilíbrio é **calibrado por dados** por um simulador Monte Carlo que roda no
 CI a cada commit.
 
-## O jogo hoje (v0.7.0)
+## O jogo hoje (v0.7.1)
 
 ```
 Menu → Como Jogar / Elenco → Draft (escolha 4 de 8) → Batalha 4v4 INTERATIVA

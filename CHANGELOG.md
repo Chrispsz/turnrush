@@ -4,6 +4,39 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/);
 versões seguem [SemVer](https://semver.org/lang/pt-BR/). O jogo está em
 **fase de mecânica**: arte/sprites/nomes finais são esboços conscientes.
 
+## [0.7.1] — resposta ao playtest 2026-10-18: manual que funciona e roguelike no meio da luta
+
+### Corrigido
+- **Modo manual travava ao escolher skill + alvo (B1/B2 do playtest)**: o
+  painel de comando era reenchido a cada frame e resetava a fila de alvos
+  ~50 ms depois do clique — os botões de alvo piscavam 1 frame e os cliques
+  morriam; a batalha ficava esperando uma entrada que nunca chegava (o
+  "freeze" relatado era a mesma espera invisível). Correção: geração de
+  decisão na engine (`InteractiveBattle::generation`) + chave
+  (geração, janela) no painel — a mesma vez nunca é reenchida; recusas da
+  engine agora aparecem no painel ("⚠ ação recusada") em vez de falharem
+  em silêncio.
+
+### Adicionado
+- **Táticas de batalha a cada 2 rodadas (R1 do playtest)**: nas rodadas
+  2/4/6/8 o jogo pausa e o jogador adota 1 de 2 táticas de escopo da
+  batalha (Reforço de Linha +12% ATK · Pele de Pedra -8% dano recebido ·
+  Fluxo Acelerado +4/rodada · Cura de Campo 3% no fim da rodada). O inimigo
+  adota a dele **em silêncio** (mesma força, zero UI). Efeito só até o fim
+  da batalha — não entra no teto de poder da run nem afeta o Monte Carlo.
+
+### Alterado
+- **Ataque padrão com alvo automático (U1 do playtest)**: mira o inimigo
+  espelhado (1↔1, 2↔2…); espelhado caído, primeiro vivo da frente para
+  trás. Dispara direto no clique, sem fila de alvos — seleção manual só
+  para poderes focados (cura aliada/interrupt).
+- **Log de batalha enxuto (U2 do playtest)**: só casts especiais
+  (Mystery/Interrupt), mortes, estados, perseguições e separadores de
+  rodada entram no log; curas/escudos ficam nos números flutuantes; teto
+  de 8 linhas.
+- **"Como Jogar" atualizado (U3)**: alvo automático do básico, janela de
+  táticas e fluxo de decisão clicado descritos passo a passo.
+
 ## [0.7.0] — modo INTERATIVO completo: fluxo, tiers, interrupt, cartas e boss
 
 ### Adicionado
