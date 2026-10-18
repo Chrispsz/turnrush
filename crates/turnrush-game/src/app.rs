@@ -240,15 +240,25 @@ pub struct BattleHeader;
 #[derive(Component)]
 pub struct BattleLogText;
 
+/// Botão de carta (índice na oferta 0..3).
 #[derive(Component)]
-pub struct RewardBtn(pub RewardKind);
+pub struct RewardBtn(pub usize);
 
-#[derive(Clone, Copy, PartialEq)]
-pub enum RewardKind {
-    Dano,
-    Vida,
-    Equilibrio,
-}
+/// Subtítulo da tela de cartas.
+#[derive(Component)]
+pub struct RewardSubtitle;
+
+/// Linha de escolha de alvo para cartas de unidade.
+#[derive(Component)]
+pub struct RewardTargetRow;
+
+/// Rótulo do botão de alvo aliado.
+#[derive(Component)]
+pub struct RewardTargetLabel(pub usize);
+
+/// Botão de alvo aliado para carta de unidade.
+#[derive(Component)]
+pub struct RewardTargetBtn(pub usize);
 
 #[derive(Component)]
 pub struct GameOverText;
@@ -378,6 +388,17 @@ pub struct DecTargetAutoBtn;
 /// Botão de reroll da oferta de cartas (Reward, v0.7).
 #[derive(Component)]
 pub struct RerollBtn;
+
+/// Oferta corrente da tela de cartas (v0.7): até 3 cartas + alvo pendente.
+#[derive(Resource, Default)]
+pub struct RewardRes {
+    /// Cartas ofertadas (referências ao CARD_POOL).
+    pub offers: Vec<&'static turnrush_core::rewards::RewardCard>,
+    /// Carta de unidade aguardando escolha de alvo vivo.
+    pub pending_unit: Option<usize>,
+    /// Filtros já comprados (para não repetir rótulos).
+    pub gerada: bool,
+}
 
 /// Linha de pré-visualização da ação.
 #[derive(Component)]
@@ -658,8 +679,12 @@ pub fn run(shot: Option<ShotOpts>, playback: bool) {
                 .run_if(in_state(GameState::Battle)),
         )
         .add_systems(OnExit(GameState::Battle), despawn_battle_scene)
-        // Recompensa
-        .add_systems(Update, reward_click.run_if(in_state(GameState::Reward)))
+        // Recompensa (cartas v0.7): enter roda a cada frame — gera a oferta
+        // só quando `gerada == false` (reroll reentra aqui)
+        .add_systems(
+            Update,
+            (reward_enter, reward_click).run_if(in_state(GameState::Reward)),
+        )
         // Fim de run
         .add_systems(OnEnter(GameState::GameOver), gameover_enter)
         .add_systems(Update, gameover_click.run_if(in_state(GameState::GameOver)))
@@ -1404,7 +1429,7 @@ fn setup_roots(tex: Res<SpriteAssets>, mut cmds: Commands) {
             });
         });
 
-    // ── Recompensa ──
+    // ── Recompensa (cartas roguelike v0.7) ──
     cmds.spawn((node_full(), StateRoot(GameState::Reward), Visibility::Hidden))
         .with_children(|p| {
             p.spawn((
@@ -1414,20 +1439,128 @@ fn setup_roots(tex: Res<SpriteAssets>, mut cmds: Commands) {
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
                     justify_content: JustifyContent::Center,
-                    row_gap: Val::Px(26.0),
+                    row_gap: Val::Px(18.0),
                     ..default()
                 },
             ))
             .with_children(|p| {
-                p.spawn((Text::new("VITÓRIA"), TextFont { font_size: FontSize::Px(48.0), ..default() }, TextColor(GOOD)));
+                p.spawn((Text::new("VITÓRIA"), TextFont { font_size: FontSize::Px(44.0), ..default() }, TextColor(GOOD)));
                 p.spawn((
-                    Text::new("Escolha um aprimoramento para a próxima batalha:"),
-                    TextFont { font_size: FontSize::Px(20.0), ..default() },
+                    RewardSubtitle,
+                    Text::new("Escolha 1 carta para a próxima batalha:"),
+                    TextFont { font_size: FontSize::Px(18.0), ..default() },
                     TextColor(TXT),
                 ));
-                btn(p, "Ataque +10%", 340.0, RewardBtn(RewardKind::Dano));
-                btn(p, "Vida +10%", 340.0, RewardBtn(RewardKind::Vida));
-                btn(p, "Equilíbrio +5%/+5%", 340.0, RewardBtn(RewardKind::Equilibrio));
+                p.spawn((Node { column_gap: Val::Px(14.0), ..default() },)).with_children(|row| {
+                    for i in 0..3usize {
+                        let nome = row
+                            .spawn((
+                                Text::new("—"),
+                                TextFont { font_size: px(17.0), ..default() },
+                                TextColor(AMBER),
+                            ))
+                            .id();
+                        let desc = row
+                            .spawn((
+                                Text::new(""),
+                                TextFont { font_size: px(12.5), ..default() },
+                                TextColor(TXT),
+                            ))
+                            .id();
+                        let meta = row
+                            .spawn((
+                                Text::new(""),
+                                TextFont { font_size: px(11.5), ..default() },
+                                TextColor(TXT_DIM),
+                            ))
+                            .id();
+                        let col = row
+                            .spawn((
+                                Node {
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(6.0),
+                                    ..default()
+                                },
+                            ))
+                            .add_child(nome)
+                            .add_child(desc)
+                            .add_child(meta)
+                            .id();
+                        row.spawn((
+                            Interaction::default(),
+                            RewardBtn(i),
+                            Node {
+                                width: Val::Px(330.0),
+                                height: Val::Px(118.0),
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                border: UiRect::all(Val::Px(2.0)),
+                                border_radius: BorderRadius::all(Val::Px(12.0)),
+                                ..default()
+                            },
+                            BackgroundColor(PANEL),
+                            BorderColor::all(TXT_DIM),
+                        ))
+                        .add_child(col);
+                    }
+                });
+                // alvo de carta de unidade (aparece quando precisa)
+                p.spawn((
+                    RewardTargetRow,
+                    Node { column_gap: Val::Px(10.0), ..default() },
+                    Visibility::Hidden,
+                ))
+                .with_children(|tr| {
+                    for slot in 0..4usize {
+                        let lbl = tr
+                            .spawn((
+                                RewardTargetLabel(slot),
+                                Text::new("—"),
+                                TextFont { font_size: px(12.0), ..default() },
+                                TextColor(TXT),
+                            ))
+                            .id();
+                        tr.spawn((
+                            Interaction::default(),
+                            RewardTargetBtn(slot),
+                            Node {
+                                width: Val::Px(180.0),
+                                height: Val::Px(36.0),
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                border: UiRect::all(Val::Px(1.0)),
+                                border_radius: BorderRadius::all(Val::Px(8.0)),
+                                ..default()
+                            },
+                            BackgroundColor(PANEL),
+                            BorderColor::all(TXT_DIM),
+                        ))
+                        .add_child(lbl);
+                    }
+                });
+                let rl = p
+                    .spawn((
+                        Text::new("Reroll (1 por batalha)"),
+                        TextFont { font_size: px(14.0), ..default() },
+                        TextColor(TXT_DIM),
+                    ))
+                    .id();
+                p.spawn((
+                    Interaction::default(),
+                    RerollBtn,
+                    Node {
+                        width: Val::Px(260.0),
+                        height: Val::Px(38.0),
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        border: UiRect::all(Val::Px(1.5)),
+                        border_radius: BorderRadius::all(Val::Px(8.0)),
+                        ..default()
+                    },
+                    BackgroundColor(PANEL),
+                    BorderColor::all(TXT_DIM),
+                ))
+                .add_child(rl);
             });
         });
 
@@ -2758,50 +2891,166 @@ fn battle_finish(
 // Recompensa
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Entra na tela de cartas: gera a oferta (run seed) e preenche os botões.
+fn reward_enter(
+    mut run: ResMut<RunRes>,
+    mut rw: ResMut<RewardRes>,
+    mut textos: Query<(&RewardBtn, &mut Text), Without<RewardTargetLabel>>,
+    mut sub: Query<&mut Text, (With<RewardSubtitle>, Without<RewardBtn>)>,
+) {
+    if !rw.gerada {
+        let factions = turnrush_core::rewards::RunState::team_factions(
+            &run.roster,
+            [run.team.first().copied().unwrap_or(0), run.team.get(1).copied().unwrap_or(0), run.team.get(2).copied().unwrap_or(0), run.team.get(3).copied().unwrap_or(0)],
+        );
+        let RunRes { cards, rng, .. } = &mut *run;
+        rw.offers = cards.offer(rng, 3, &factions);
+        rw.gerada = true;
+        rw.pending_unit = None;
+    }
+    let _ = sub.single_mut().map(|mut t| {
+        *t = Text::new(format!(
+            "Escolha 1 carta · poder da run {}/300",
+            run.cards.poder
+        ));
+    });
+    for (btn, mut t) in textos.iter_mut() {
+        let i = (btn.0).min(rw.offers.len().saturating_sub(1));
+        if rw.offers.is_empty() {
+            *t = Text::new("—");
+            continue;
+        }
+        let c = rw.offers[i];
+        let classe = match c.class {
+            turnrush_core::rewards::CardClass::Team => "Equipe",
+            turnrush_core::rewards::CardClass::Unit => "Unidade",
+            turnrush_core::rewards::CardClass::Tactic => "Tática",
+        };
+        *t = Text::new(format!(
+            "{} [{}]\n{}\npoder +{} · {}",
+            c.name,
+            classe,
+            c.desc,
+            c.poder,
+            c.rarity.label()
+        ));
+    }
+}
+
+/// Cliques da tela de cartas: escolher carta (com alvo, se de unidade),
+/// reroll 1×/batalha e avanço para a próxima batalha.
 #[allow(clippy::too_many_arguments)] // assinatura de sistema Bevy
 fn reward_click(
     mut cmds: Commands,
     mut run: ResMut<RunRes>,
+    mut rw: ResMut<RewardRes>,
     mut pb: ResMut<PlaybackRes>,
     pref: Res<PlaybackPref>,
     mut manual: ResMut<ManualRes>,
     mut pending: ResMut<PendingUi>,
     mut scene: ResMut<BattleScene>,
+    mut trow: Query<&mut Visibility, (With<RewardTargetRow>, Without<RewardBtn>)>,
+    mut labels: Query<(&RewardTargetLabel, &mut Text), Without<RewardBtn>>,
     mut state: ResMut<NextState<GameState>>,
-    q: Query<(&Interaction, &RewardBtn), Changed<Interaction>>,
+    cards: Query<(&Interaction, &RewardBtn), Changed<Interaction>>,
+    alvos: Query<(&Interaction, &RewardTargetBtn), Changed<Interaction>>,
+    rerolls: Query<&Interaction, (With<RerollBtn>, Changed<Interaction>)>,
 ) {
-    for (inter, r) in q.iter() {
-        if *inter != Interaction::Pressed {
+    // escolha de alvo para carta de unidade
+    if let Some(card_idx) = rw.pending_unit {
+        if let Ok(mut v) = trow.single_mut() {
+            *v = Visibility::Visible;
+        }
+        for (lbl, mut t) in labels.iter_mut() {
+            let slot = lbl.0.min(3);
+            let ci = run.team.get(slot).copied().unwrap_or(0);
+            let c = &run.roster.characters[ci.min(run.roster.len() - 1)];
+            *t = Text::new(format!("{} →", c.name));
+        }
+        for (inter, tb) in alvos.iter() {
+            if *inter != Interaction::Pressed {
+                continue;
+            }
+            let slot = tb.0.min(3);
+            tomar_carta(&mut run, &mut rw, card_idx, Some(slot));
+            iniciar_proxima_batalha(&mut run, &mut pb, &mut manual, &mut pending, &mut scene, &mut cmds, pref.0, &mut state);
+            return;
+        }
+    } else if let Ok(mut v) = trow.single_mut() {
+        *v = Visibility::Hidden;
+    }
+
+    // reroll (1 por batalha) — a nova oferta é gerada pelo reward_enter
+    for inter in rerolls.iter() {
+        if *inter == Interaction::Pressed && rw.pending_unit.is_none() && run.cards.reroll() {
+            rw.gerada = false;
+            rw.offers.clear();
+        }
+    }
+
+    // escolha de carta
+    for (inter, rb) in cards.iter() {
+        if *inter != Interaction::Pressed || rw.pending_unit.is_some() {
             continue;
         }
-        let tipo = match r.0 {
-            RewardKind::Dano => {
-                run.mods.dmg_permille += 100;
-                "dano"
-            }
-            RewardKind::Vida => {
-                run.mods.hp_permille += 100;
-                "vida"
-            }
-            RewardKind::Equilibrio => {
-                run.mods.dmg_permille += 50;
-                run.mods.hp_permille += 50;
-                "equilibrio"
-            }
+        let Some(&c) = rw.offers.get((rb.0).min(rw.offers.len().saturating_sub(1))) else {
+            continue;
         };
+        if c.class == turnrush_core::rewards::CardClass::Unit {
+            rw.pending_unit = Some(pool_index(c));
+            continue;
+        }
+        tomar_carta(&mut run, &mut rw, pool_index(c), None);
+        iniciar_proxima_batalha(&mut run, &mut pb, &mut manual, &mut pending, &mut scene, &mut cmds, pref.0, &mut state);
+        return;
+    }
+}
+
+/// Posição estável de uma carta no CARD_POOL (id para `card_targets`).
+fn pool_index(c: &turnrush_core::rewards::RewardCard) -> usize {
+    turnrush_core::rewards::CARD_POOL.iter().position(|x| x.id == c.id).unwrap_or(0)
+}
+
+/// Registra a carta comprada (alvo para cartas de unidade). `idx` = posição
+/// no CARD_POOL (usado como id estável para `card_targets`).
+fn tomar_carta(run: &mut RunRes, rw: &mut RewardRes, idx: usize, slot: Option<usize>) {
+    let c = &turnrush_core::rewards::CARD_POOL[idx];
+    if run.cards.take(c, slot).is_ok() {
+        if let Some(slot) = slot {
+            run.card_targets.push((slot, idx));
+        }
         turnrush_core::logger::kv(
             turnrush_core::logger::Level::Info,
-            "reward_picked",
-            "aprimoramento escolhido",
-            &[("tipo", turnrush_core::logger::V::S(tipo))],
+            "card_taken",
+            "carta comprada",
+            &[
+                ("carta", turnrush_core::logger::V::S(c.name)),
+                ("poder", turnrush_core::logger::V::U(run.cards.poder as u64)),
+            ],
         );
-        pending.active = false;
-        pending.choosing_target = false;
-        scene.chase_gold.clear();
-        construir_batalha(pref.0, &mut run, &mut pb, &mut manual, &mut cmds);
-        state.set(GameState::Battle);
-        break;
     }
+    rw.gerada = false;
+    rw.pending_unit = None;
+    rw.offers.clear();
+}
+
+/// Avança para a próxima batalha (ou fim de run).
+#[allow(clippy::too_many_arguments)]
+fn iniciar_proxima_batalha(
+    run: &mut RunRes,
+    pb: &mut PlaybackRes,
+    manual: &mut ManualRes,
+    pending: &mut PendingUi,
+    scene: &mut BattleScene,
+    cmds: &mut Commands,
+    pref: bool,
+    state: &mut ResMut<NextState<GameState>>,
+) {
+    pending.active = false;
+    pending.choosing_target = false;
+    scene.chase_gold.clear();
+    construir_batalha(pref, run, pb, manual, cmds);
+    state.set(GameState::Battle);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
