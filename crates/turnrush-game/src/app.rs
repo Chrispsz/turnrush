@@ -347,6 +347,10 @@ pub struct PendingUi {
     pub chasers: Vec<usize>,
     /// Texto da timeline da rodada (ordem visível).
     pub timeline: String,
+    /// Chave da vez preenchida: (geração de decisão, chase). Enquanto a
+    /// mesma chave persiste, o painel NÃO é reenchido — protege a escolha
+    /// de alvo do jogador do re-preenchimento por frame (feedback B1).
+    pub key: Option<(u64, bool)>,
 }
 
 // ── Marcadores do painel de decisão ──
@@ -2189,6 +2193,14 @@ fn manual_tick(
 /// Preenche o painel de decisão com o estado da vez corrente.
 fn preencher_painel(ctl: &mut BattleController, chase: bool, pending: &mut PendingUi) {
     let Some(p) = ctl.prompt() else { return };
+    // B1 (feedback 2026-10-18): `manual_tick` chama isto todo frame; se a
+    // MESMA vez continua (mesma geração + mesma janela), preserva o estado
+    // da escolha em andamento (alvo selecionado etc.) em vez de resetar.
+    let chave = (ctl.bt.generation(), chase);
+    if pending.active && pending.key == Some(chave) {
+        return;
+    }
+    pending.key = Some(chave);
     pending.active = true;
     pending.chase = chase;
     pending.choosing_target = false;
@@ -2291,6 +2303,7 @@ fn aplicar_evento(
                 ));
             }
             queue.0.push(VisEvent::Round(*round as u64));
+            linha = format!("— Rodada {round} —");
         }
         BattleEvent::FluxoGain { side, slot, amount } => {
             pb.fluxo[side * 4 + slot] = bt.unit(*side, *slot).fluxo;
@@ -2299,15 +2312,21 @@ fn aplicar_evento(
         BattleEvent::ActionDeclared { side, slot, kind, name, target } => {
             let ator = side * 4 + slot;
             queue.0.push(VisEvent::Lunge(ator));
-            linha = match target {
-                Some((tside, tslot)) => {
-                    format!(
-                        "{} usa «{name}» → {}",
-                        bt.unit(*side, *slot).name,
-                        bt.unit(*tside, *tslot).name
-                    )
+            // U2 (feedback): log enxuto — só cast Especial entra no log;
+            // padrão/skill são visíveis pelos números flutuantes.
+            linha = if matches!(kind, ActionKind::Mystery | ActionKind::Interrupt) {
+                match target {
+                    Some((tside, tslot)) => {
+                        format!(
+                            "{} usa «{name}» → {}",
+                            bt.unit(*side, *slot).name,
+                            bt.unit(*tside, *tslot).name
+                        )
+                    }
+                    None => format!("{} usa «{name}»", bt.unit(*side, *slot).name),
                 }
-                None => format!("{} usa «{name}»", bt.unit(*side, *slot).name),
+            } else {
+                String::new()
             };
             if *kind == ActionKind::Mystery {
                 queue.0.push(VisEvent::Chain); // brilho de mystery reutiliza o efeito de cadeia
@@ -2330,7 +2349,7 @@ fn aplicar_evento(
             if *amount > 0 {
                 queue.0.push(VisEvent::Heal(side * 4 + slot, *amount as i64));
             }
-            linha = format!("cura {amount} em {}", bt.unit(*side, *slot).name);
+            // U2: cura visível pelo número verde — não polui o log.
         }
         BattleEvent::Revive { side, slot, amount } => {
             pb.alive[side * 4 + slot] = true;
@@ -2340,7 +2359,8 @@ fn aplicar_evento(
         }
         BattleEvent::Shield { side, slot, amount } => {
             queue.0.push(VisEvent::Heal(side * 4 + slot, *amount as i64));
-            linha = format!("escudo {amount} em {}", bt.unit(*side, *slot).name);
+            // U2: escudo visível pelo número verde — não polui o log.
+            let _ = (side, slot, amount);
         }
         BattleEvent::StateApplied { side, slot, state } => {
             queue.0.push(VisEvent::Dot(side * 4 + slot, estado_icone(state.label())));
@@ -2418,8 +2438,8 @@ fn aplicar_evento(
             atual.push_str(&linha);
         }
         let linhas: Vec<&str> = atual.lines().collect();
-        if linhas.len() > 12 {
-            atual = linhas[linhas.len() - 12..].join("\n");
+        if linhas.len() > 8 {
+            atual = linhas[linhas.len() - 8..].join("\n");
         }
         *t = Text::new(atual);
     }
@@ -2618,8 +2638,13 @@ fn escolher_acao(ctl: Option<&mut BattleController>, pending: &mut PendingUi, ki
     } else {
         let prev = ctl.bt.preview_action(p.side, p.slot, ChosenAction::Act { kind, target: None }).ok();
         pending.preview = format_previsao(&prev, kind);
-        let _ = ctl.submit(ChosenAction::Act { kind, target: None });
-        pending.active = false;
+        match ctl.submit(ChosenAction::Act { kind, target: None }) {
+            Ok(()) => pending.active = false,
+            Err(e) => {
+                // Recusa visível; o painel permanece na mesma vez.
+                pending.preview = format!("⚠ ação recusada: {e:?}");
+            }
+        }
         turnrush_core::logger::kv(
             turnrush_core::logger::Level::Info,
             "manual_decision",
@@ -2687,32 +2712,47 @@ fn target_click(
             continue; // alvo caído — ignora
         }
         if let Some(ctl) = manual.ctl.as_mut() {
-            let _ = ctl.submit(ChosenAction::Act { kind, target: Some(slot) });
-            turnrush_core::logger::kv(
-                turnrush_core::logger::Level::Info,
-                "manual_target",
-                "alvo escolhido",
-                &[
-                    ("slot", turnrush_core::logger::V::U(slot as u64)),
-                    ("acao", turnrush_core::logger::V::S(kind.label())),
-                ],
-            );
+            match ctl.submit(ChosenAction::Act { kind, target: Some(slot) }) {
+                Ok(()) => {
+                    turnrush_core::logger::kv(
+                        turnrush_core::logger::Level::Info,
+                        "manual_target",
+                        "alvo escolhido",
+                        &[
+                            ("slot", turnrush_core::logger::V::U(slot as u64)),
+                            ("acao", turnrush_core::logger::V::S(kind.label())),
+                        ],
+                    );
+                    pending.active = false;
+                    pending.choosing_target = false;
+                    pending.selected = None;
+                    scene.chase_gold.clear();
+                }
+                Err(e) => {
+                    // Recusa visível: a escolha permanece aberta para retry.
+                    pending.preview = format!("⚠ ação recusada: {e:?}");
+                }
+            }
+        } else {
+            return;
         }
-        pending.active = false;
-        pending.choosing_target = false;
-        pending.selected = None;
-        scene.chase_gold.clear();
         return;
     }
     for inter in autos.iter() {
         if *inter == Interaction::Pressed {
             if let Some(ctl) = manual.ctl.as_mut() {
-                let _ = ctl.submit(ChosenAction::Act { kind, target: None });
+                match ctl.submit(ChosenAction::Act { kind, target: None }) {
+                    Ok(()) => {
+                        pending.active = false;
+                        pending.choosing_target = false;
+                        pending.selected = None;
+                        scene.chase_gold.clear();
+                    }
+                    Err(e) => {
+                        pending.preview = format!("⚠ ação recusada: {e:?}");
+                    }
+                }
             }
-            pending.active = false;
-            pending.choosing_target = false;
-            pending.selected = None;
-            scene.chase_gold.clear();
             return;
         }
     }
@@ -2813,12 +2853,18 @@ fn battle_keys(
             let kind = pending.selected.expect("seleção verificada");
             let alvo = if slot == usize::MAX { None } else { Some(slot) };
             if let Some(ctl) = manual.ctl.as_mut() {
-                let _ = ctl.submit(ChosenAction::Act { kind, target: alvo });
+                match ctl.submit(ChosenAction::Act { kind, target: alvo }) {
+                    Ok(()) => {
+                        pending.active = false;
+                        pending.choosing_target = false;
+                        pending.selected = None;
+                        scene.chase_gold.clear();
+                    }
+                    Err(e) => {
+                        pending.preview = format!("⚠ ação recusada: {e:?}");
+                    }
+                }
             }
-            pending.active = false;
-            pending.choosing_target = false;
-            pending.selected = None;
-            scene.chase_gold.clear();
             break;
         }
     }

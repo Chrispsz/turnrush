@@ -525,6 +525,9 @@ pub struct InteractiveBattle {
     /// Vantagens por lado (escala + cartas).
     edges: [SideEdge; 2],
     unmodeled: Vec<String>,
+    /// Geração de decisão: incrementa a cada decisão consumida (a UI usa
+    /// para NÃO resetar a escolha em andamento — feedback 2026-10-18 B1).
+    decision_gen: u64,
 }
 
 impl InteractiveBattle {
@@ -586,6 +589,7 @@ impl InteractiveBattle {
             chain_links_round: 0,
             revive_used: [false; 2],
             unmodeled,
+            decision_gen: 0,
         }
     }
 
@@ -752,6 +756,7 @@ impl InteractiveBattle {
             if !self.chase_queue.is_empty() {
                 if self.chase_eligible().is_empty() {
                     // Ninguém pode perseguir: a janela fecha sozinha (transparente).
+                    self.decision_gen += 1;
                     self.reject_chase(self.chase_side);
                     continue;
                 }
@@ -814,6 +819,14 @@ impl InteractiveBattle {
         self.starter
     }
 
+    /// Geração de decisão: incrementa a cada decisão consumida (ação,
+    /// chase, recusa, skip). Estável enquanto a MESMA vez continua — a UI
+    /// compara antes de reencher o painel para não resetar a escolha
+    /// em andamento do jogador (feedback 2026-10-18 B1).
+    pub fn generation(&self) -> u64 {
+        self.decision_gen
+    }
+
     /// Retrato imutável de uma unidade.
     pub fn unit(&self, side: usize, slot: usize) -> UnitSnapshot {
         let u = &self.sides[side].units[slot];
@@ -873,7 +886,9 @@ impl InteractiveBattle {
         out.push(LegalAction {
             kind: ActionKind::Standard,
             fluxo_cost: 0,
-            targeting: TargetKind::Enemy,
+            // U1 (feedback 2026-10-18): padrão é de alvo automático — a UI
+            // executa direto, sem fila de alvos (básico mira o espelhado).
+            targeting: TargetKind::Auto,
             name: u.standard.name.clone(),
         });
         if u.silence_turns == 0 && u.skill_cd == 0 && u.fluxo >= SKILL_COST {
@@ -1007,7 +1022,7 @@ impl InteractiveBattle {
         let mut notes: Vec<String> = Vec::new();
         match kind {
             ActionKind::Standard => {
-                let Some(tslot) = self.standard_target(side, target) else {
+                let Some(tslot) = self.standard_target(side, slot, target) else {
                     return Err(ActionError::BadTarget);
                 };
                 if let Some(t) = target {
@@ -1131,6 +1146,7 @@ impl InteractiveBattle {
                 ChosenAction::RejectChase => self.reject_chase(side),
                 ChosenAction::Act { .. } => return Err(ActionError::WrongPhase),
             }
+            self.decision_gen += 1;
             return Ok(std::mem::take(&mut self.outbox));
         }
         let (side, slot) = match self.current_entry() {
@@ -1141,6 +1157,7 @@ impl InteractiveBattle {
             return Err(ActionError::WrongPhase);
         };
         self.validate(side, slot, kind, target)?;
+        self.decision_gen += 1;
         match kind {
             ActionKind::Standard => self.do_standard(side, slot, target),
             ActionKind::Skill => self.do_tier(side, slot, &self.sides[side].units[slot].skill.clone(), SKILL_COST, SKILL_CD, target),
@@ -1333,6 +1350,7 @@ impl InteractiveBattle {
             };
             let u = &self.sides[side].units[slot];
             if !u.alive {
+                self.decision_gen += 1;
                 self.outbox.push(BattleEvent::Skip { side, slot, reason: SkipReason::Dead });
                 self.cursor += 1;
                 continue;
@@ -1340,6 +1358,7 @@ impl InteractiveBattle {
             if u.stun_turns > 0 {
                 self.sides[side].units[slot].stun_turns -= 1;
                 self.sides[side].acted[slot] = true;
+                self.decision_gen += 1;
                 self.outbox.push(BattleEvent::Skip { side, slot, reason: SkipReason::Stunned });
                 self.cursor += 1;
                 continue;
@@ -1418,13 +1437,20 @@ impl InteractiveBattle {
     // ── Cálculos puros (compartilhados por execução e pré-visualização) ─────
 
     /// Slot inimigo resolvido do ataque padrão (`None` = sem vivos).
-    fn standard_target(&self, side: usize, target: Option<usize>) -> Option<usize> {
+    /// U1 (feedback 2026-10-18): o padrão mira o slot ESPELHADO (1↔1,
+    /// 2↔2…); se o espelhado caiu, ataca o primeiro vivo da frente para
+    /// trás — sem seleção manual na UI (alvo automático).
+    fn standard_target(&self, side: usize, slot: usize, target: Option<usize>) -> Option<usize> {
         let enemy = 1 - side;
-        let targets = self.sides[enemy].living_slots();
-        match target {
-            Some(t) if t < 4 && self.sides[enemy].units[t].alive => Some(t),
-            _ => targets.first().copied(),
+        if let Some(t) = target {
+            if t < 4 && self.sides[enemy].units[t].alive {
+                return Some(t);
+            }
         }
+        if self.sides[enemy].units[slot].alive {
+            return Some(slot);
+        }
+        self.sides[enemy].living_slots().first().copied()
     }
 
     /// Dano final do padrão no alvo (com bônus e mitigações), sem mutação.
@@ -1533,16 +1559,16 @@ impl InteractiveBattle {
             let u = &self.sides[side].units[slot];
             (u.standard.name.clone(), u.standard.damage_pct, u.standard.applies_state)
         };
+        let Some(tslot) = self.standard_target(side, slot, target) else {
+            return;
+        };
         self.outbox.push(BattleEvent::ActionDeclared {
             side,
             slot,
             kind: ActionKind::Standard,
             name: sname,
-            target: target.map(|t| (1 - side, t)),
+            target: Some((1 - side, tslot)),
         });
-        let Some(tslot) = self.standard_target(side, target) else {
-            return;
-        };
         let dmg = self.standard_damage(side, slot, tslot);
         let atk = self.sides[side].units[slot].atk_eff();
         let dot_on_hit = self.sides[side].units[slot].dot_on_hit;
@@ -2718,5 +2744,57 @@ mod tests {
         assert_eq!(mel.mystery.heal_pct, 165, "cura da mystery amplificada (banda 150-180)");
         assert_eq!(mel.mystery.dmg_pct, 0, "suporte não tem dano na mystery");
         let _ = idx_reia + idx_volta + idx_mel;
+    }
+
+    /// U1 (feedback 2026-10-18): o ataque padrão tem ALVO AUTOMÁTICO —
+    /// mira o slot espelhado (1↔1, 2↔2…); a prévia resolve sem alvo dado.
+    #[test]
+    fn padrao_auto_mira_espelhado() {
+        let r = roster();
+        let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 11);
+        let p = bt.prompt();
+        assert_eq!(p.phase, PromptPhase::ChooseAction);
+        let pv = bt
+            .preview_action(p.side, p.slot, ChosenAction::Act { kind: ActionKind::Standard, target: None })
+            .expect("prévia do padrão");
+        assert_eq!(pv.targets, vec![(1 - p.side, p.slot)], "espelhado é o alvo automático");
+        // e o legal_actions NÃO pede fila de alvos (UI executa direto)
+        let legal = bt.legal_actions(p.side, p.slot).into_iter().find(|l| l.kind == ActionKind::Standard).expect("legal");
+        assert_eq!(legal.targeting, TargetKind::Auto, "padrão sem seleção de alvo");
+    }
+
+    /// U1 (feedback): espelhado caído → primeiro vivo da frente para trás.
+    #[test]
+    fn padrao_cai_no_primeiro_vivo_se_espelhado_morto() {
+        let r = roster();
+        let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 5);
+        let p = bt.prompt();
+        // mata o ESPELHADO da unidade na vez (slot p.slot do inimigo)
+        bt.sides[1 - p.side].units[p.slot].hp = 0;
+        bt.sides[1 - p.side].units[p.slot].alive = false;
+        let pv = bt
+            .preview_action(p.side, p.slot, ChosenAction::Act { kind: ActionKind::Standard, target: None })
+            .expect("prévia");
+        // primeiro vivo da frente para trás = menor slot vivo (todos os
+        // outros estão de pé)
+        let esperado = (0..4).find(|&s| s != p.slot).unwrap();
+        assert_eq!(pv.targets.first().copied(), Some((1 - p.side, esperado)), "cai no primeiro vivo da frente");
+    }
+
+    /// B1 (feedback 2026-10-18): geração de decisão — estável enquanto a
+    /// MESMA vez continua; incrementa a cada decisão consumida.
+    #[test]
+    fn generation_estavel_na_mesma_vez() {
+        let r = roster();
+        let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 3);
+        let p = bt.prompt();
+        if p.phase == PromptPhase::ChooseAction {
+            let g1 = bt.generation();
+            let _ = bt.prompt(); // consultas repetidas NÃO consomem decisão
+            let _ = bt.prompt();
+            assert_eq!(bt.generation(), g1, "vez repetida não muda a geração");
+            let _ = bt.execute_action(ChosenAction::Act { kind: ActionKind::Standard, target: None });
+            assert_eq!(bt.generation(), g1 + 1, "decisão consumida incrementa a geração");
+        }
     }
 }
