@@ -46,10 +46,10 @@ use bevy::window::WindowResolution;
 use std::collections::HashMap;
 
 use turnrush_core::data::{ComboState, Roster, RosterChar, TargetSpec};
-use turnrush_core::formation::{Formation4v4, FormationMods, Outcome};
+use turnrush_core::formation::{ActionChoice, Formation4v4, FormationMods, Outcome};
 use turnrush_core::rng::Rng;
 
-use crate::battle_log::{parse_all, EvKind, ParsedEvent};
+use crate::battle_log::{parse_all, parse_line, EvKind, ParsedEvent};
 use crate::scene;
 use crate::scene::{despawn_battle_scene, spawn_battle_scene, BattleScene, FxQueue, VisEvent};
 use crate::sprites::SpriteAssets;
@@ -62,9 +62,9 @@ pub fn px(v: f32) -> FontSize {
 /// Vitórias necessárias para completar a run.
 pub const VICTORIES_TO_WIN: usize = 3;
 /// Segundos entre eventos do playback.
-const STEP_SECS: f32 = 0.36;
+const STEP_SECS: f32 = 0.30;
 /// Pausa extra ao abrir rodada.
-const ROUND_SECS: f32 = 0.95;
+const ROUND_SECS: f32 = 0.80;
 /// Duração do flash de dano.
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -253,6 +253,93 @@ pub struct SpeedLabel;
 #[derive(Resource, Default)]
 pub struct FastForward(pub bool);
 
+// ────────────────────────────────────────────────────────────────────────────
+// Batalha manual (v0.6): engine por passos com decisão do jogador
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Modo de condução da batalha corrente.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
+pub enum BattleMode {
+    /// Playback integral (log pronto) — usado pelo modo `--shot`.
+    #[default]
+    Playback,
+    /// Manual: engine avança por passos e o jogador decide cada ação.
+    Manual,
+}
+
+/// Condição de sistema: batalha em playback automático.
+fn is_playback(mode: Res<BattleMode>) -> bool {
+    *mode == BattleMode::Playback
+}
+
+/// Condição de sistema: batalha manual.
+fn is_manual(mode: Res<BattleMode>) -> bool {
+    *mode == BattleMode::Manual
+}
+
+/// Estado da batalha manual: engine vivo + fila de eventos por exibir.
+#[derive(Resource, Default)]
+pub struct ManualRes {
+    /// Engine da batalha corrente (lado 0 manual). `None` fora de batalha.
+    pub f: Option<Formation4v4>,
+    /// Índice do próximo evento cru a converter em [`ParsedEvent`].
+    pub ev_cursor: usize,
+    /// Eventos parseados aguardando exibição (aplicados 1 por tick).
+    pub parsed: Vec<ParsedEvent>,
+    /// Botão Auto: a IA do engine resolve as decisões do jogador.
+    pub auto: bool,
+}
+
+/// Decisão pendente exibida no painel manual (dados já resolvidos p/ UI).
+#[derive(Resource, Default)]
+pub struct PendingUi {
+    pub active: bool,
+    pub choosing_target: bool,
+    pub name: String,
+    pub chakra: i32,
+    pub mystery_ready: bool,
+    pub mystery_cost: i32,
+    pub mystery_name: String,
+    pub mystery_desc: String,
+    pub standard_name: String,
+    /// (nome, hp%, vivo) por slot inimigo.
+    pub targets: [(String, i32, bool); 4],
+}
+
+// ── Marcadores do painel de decisão ──
+
+#[derive(Component)]
+pub struct DecPanel;
+#[derive(Component)]
+pub struct DecTargetRow;
+#[derive(Component)]
+pub struct DecTitleText;
+#[derive(Component)]
+pub struct DecMysteryLabel;
+#[derive(Component)]
+pub struct DecStandardLabel;
+#[derive(Component)]
+pub struct DecTargetLabel(pub usize);
+
+/// Botão do painel de decisão.
+#[derive(Component, Clone, Copy, PartialEq)]
+pub struct DecBtn(pub DecKind);
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum DecKind {
+    Mystery,
+    Standard,
+    Auto,
+}
+
+/// Botão de alvo inimigo (slot 0..4).
+#[derive(Component, Clone, Copy, PartialEq)]
+pub struct DecTargetBtn(pub usize);
+
+/// Botão “Auto-alvo” (regra da IA: primeiro inimigo vivo).
+#[derive(Component)]
+pub struct DecTargetAutoBtn;
+
 /// Conteúdo da tela "Como Jogar" — regras FIÉIS ao engine (formation.rs).
 const AJUDA: [(&str, &str); 7] = [
     (
@@ -260,8 +347,8 @@ const AJUDA: [(&str, &str); 7] = [
         "A oferta é a mesma para os dois lados (simetria por construção).\nA IA monta o time inimigo entre os personagens restantes do elenco.",
     ),
     (
-        "2 · BATALHA 4v4 POR TURNOS",
-        "Turnos alternados A-B-A-B por posição; quem abre a 1ª rodada é sorteado.\nMystery tem custo de chakra e cooldown — sem chakra, age o ataque padrão.\nChakra: 20 inicial · +12 por rodada · teto 100 (passivas podem dar mais).",
+        "2 · BATALHA 4v4 POR TURNOS (VOCÊ COMANDA)",
+        "Turnos alternados A-B-A-B por posição; quem abre a 1ª rodada é sorteado.\nNa vez de cada unidade sua, o painel inferior oferece a Mystery (custo de\nchakra) ou o Padrão com alvo clicável. Máximo de 12 rodadas — desempate\npor % de vida. Chakra: 30 inicial · +14 por rodada · teto 100.",
     ),
     (
         "3 · CHAIN COMBOS (CADEIAS DE PERSEGUIÇÃO)",
@@ -281,7 +368,7 @@ const AJUDA: [(&str, &str); 7] = [
     ),
     (
         "7 · CONTROLES (modo offline)",
-        "Tudo no mouse. Na batalha, o botão Acelerar (canto direito) alterna o\nplayback entre 1× e 6×. Tudo roda local — a IA adversária é a mesma\nheurística validada pelo simulador Monte Carlo.",
+        "Tudo no mouse. Na batalha: Mystery/Padrão no painel inferior — Padrão\nabre os alvos inimigos (clique num inimigo vivo ou use Auto-alvo).\nBotão Auto entrega as decisões à IA; Acelerar alterna playback 1×/6×.",
     ),
 ];
 
@@ -462,6 +549,9 @@ pub fn run(shot: Option<ShotOpts>) {
         .insert_resource(new_run())
         .init_resource::<DraftRes>()
         .init_resource::<FastForward>()
+        .init_resource::<BattleMode>()
+        .init_resource::<ManualRes>()
+        .init_resource::<PendingUi>()
         .init_resource::<FxQueue>()
         .init_resource::<BattleScene>()
         .insert_resource(new_playback_placeholder())
@@ -501,7 +591,11 @@ pub fn run(shot: Option<ShotOpts>) {
         .add_systems(
             Update,
             (
-                battle_playback,
+                battle_playback.run_if(is_playback),
+                manual_tick.run_if(is_manual),
+                sync_decision_panel,
+                decision_click,
+                target_click,
                 scene::scene_animate,
                 scene::scene_fx,
                 scene::fx_motion,
@@ -689,7 +783,7 @@ fn shot_tick(
             // formação fixa: exercita build_battle + battle_enter sem interação
             run.team = vec![0, 1, 2, 3];
             run.enemy = vec![4, 5, 6, 7];
-            build_battle(&mut run, &mut pb);
+            build_battle(&mut run, &mut pb, &mut cmds);
             next.set(GameState::Battle);
             st.timer = 2.6;
             st.phase = ShotPhase::Batalha;
@@ -852,7 +946,7 @@ fn setup_roots(tex: Res<SpriteAssets>, mut cmds: Commands) {
                     TextColor(TXT_DIM),
                 ));
                 p.spawn((
-                    Text::new("modo offline — adversário controlado pela IA do engine"),
+                    Text::new("modo offline — você comanda cada ação · adversário = IA do engine"),
                     TextFont { font_size: FontSize::Px(13.0), ..default() },
                     TextColor(TXT_DIM),
                 ));
@@ -1088,6 +1182,156 @@ fn setup_roots(tex: Res<SpriteAssets>, mut cmds: Commands) {
             .with_children(|lp| {
                 lp.spawn((BattleLogText, Text::new(""), TextFont { font_size: FontSize::Px(14.0), ..default() }, TextColor(TXT_DIM)));
             });
+
+            // ── Painel de decisão manual (v0.6 — modo Jogar) ──
+            // Overlay absoluto na base: aparece só quando uma decisão do
+            // jogador está pendente (cobre parte do log durante a escolha).
+            p.spawn((
+                DecPanel,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(4.0),
+                    bottom: Val::Px(10.0),
+                    width: Val::Percent(92.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(6.0),
+                    padding: UiRect::all(Val::Px(10.0)),
+                    border_radius: BorderRadius::all(Val::Px(10.0)),
+                    ..default()
+                },
+                BackgroundColor(PANEL_DARK),
+                BorderColor::all(AMBER),
+                Visibility::Hidden,
+            ))
+            .with_children(|dp| {
+                dp.spawn((
+                    DecTitleText,
+                    Text::new("Sua vez"),
+                    TextFont { font_size: px(16.0), ..default() },
+                    TextColor(AMBER),
+                ));
+                dp.spawn((Node { column_gap: Val::Px(8.0), ..default() },)).with_children(|row| {
+                    let ml = row
+                        .spawn((
+                            DecMysteryLabel,
+                            Text::new("Mystery"),
+                            TextFont { font_size: px(14.0), ..default() },
+                            TextColor(TXT),
+                        ))
+                        .id();
+                    row.spawn((
+                        Interaction::default(),
+                        DecBtn(DecKind::Mystery),
+                        Node {
+                            width: Val::Px(330.0),
+                            height: Val::Px(40.0),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            border: UiRect::all(Val::Px(1.5)),
+                            border_radius: BorderRadius::all(Val::Px(8.0)),
+                            ..default()
+                        },
+                        BackgroundColor(PANEL),
+                        BorderColor::all(AMBER),
+                    ))
+                    .add_child(ml);
+                    let sl = row
+                        .spawn((
+                            DecStandardLabel,
+                            Text::new("Padrão"),
+                            TextFont { font_size: px(14.0), ..default() },
+                            TextColor(TXT),
+                        ))
+                        .id();
+                    row.spawn((
+                        Interaction::default(),
+                        DecBtn(DecKind::Standard),
+                        Node {
+                            width: Val::Px(280.0),
+                            height: Val::Px(40.0),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            border: UiRect::all(Val::Px(1.5)),
+                            border_radius: BorderRadius::all(Val::Px(8.0)),
+                            ..default()
+                        },
+                        BackgroundColor(PANEL),
+                        BorderColor::all(TXT_DIM),
+                    ))
+                    .add_child(sl);
+                    let al = row
+                        .spawn((Text::new("Auto ▶"), TextFont { font_size: px(14.0), ..default() }, TextColor(TXT_DIM)))
+                        .id();
+                    row.spawn((
+                        Interaction::default(),
+                        DecBtn(DecKind::Auto),
+                        Node {
+                            width: Val::Px(90.0),
+                            height: Val::Px(40.0),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            border: UiRect::all(Val::Px(1.5)),
+                            border_radius: BorderRadius::all(Val::Px(8.0)),
+                            ..default()
+                        },
+                        BackgroundColor(PANEL),
+                        BorderColor::all(TXT_DIM),
+                    ))
+                    .add_child(al);
+                });
+                dp.spawn((
+                    DecTargetRow,
+                    Node { column_gap: Val::Px(8.0), ..default() },
+                    Visibility::Hidden,
+                ))
+                .with_children(|tr| {
+                    for slot in 0..4usize {
+                        let tl = tr
+                            .spawn((
+                                DecTargetLabel(slot),
+                                Text::new("—"),
+                                TextFont { font_size: px(12.0), ..default() },
+                                TextColor(TXT),
+                            ))
+                            .id();
+                        tr.spawn((
+                            Interaction::default(),
+                            DecTargetBtn(slot),
+                            Node {
+                                width: Val::Px(185.0),
+                                height: Val::Px(34.0),
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                border: UiRect::all(Val::Px(1.0)),
+                                border_radius: BorderRadius::all(Val::Px(6.0)),
+                                ..default()
+                            },
+                            BackgroundColor(PANEL),
+                            BorderColor::all(TXT_DIM),
+                        ))
+                        .add_child(tl);
+                    }
+                    let ta = tr
+                        .spawn((Text::new("Auto-alvo"), TextFont { font_size: px(12.0), ..default() }, TextColor(TXT_DIM)))
+                        .id();
+                    tr.spawn((
+                        Interaction::default(),
+                        DecTargetAutoBtn,
+                        Node {
+                            width: Val::Px(110.0),
+                            height: Val::Px(34.0),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            border: UiRect::all(Val::Px(1.0)),
+                            border_radius: BorderRadius::all(Val::Px(6.0)),
+                            ..default()
+                        },
+                        BackgroundColor(PANEL),
+                        BorderColor::all(TXT_DIM),
+                    ))
+                    .add_child(ta);
+                });
+            });
         });
 
     // ── Recompensa ──
@@ -1287,8 +1531,11 @@ fn draft_card_click(
 }
 
 fn draft_confirm(
+    mut cmds: Commands,
     mut run: ResMut<RunRes>,
     mut playback: ResMut<PlaybackRes>,
+    mut manual: ResMut<ManualRes>,
+    mut pending: ResMut<PendingUi>,
     cards: Query<&DraftCard, With<CardSelected>>,
     mut state: ResMut<NextState<GameState>>,
 ) {
@@ -1301,7 +1548,9 @@ fn draft_confirm(
     run.rng.shuffle(&mut rest);
     run.team = selected;
     run.enemy = rest.into_iter().take(4).collect();
-    build_battle(&mut run, &mut playback);
+    pending.active = false;
+    pending.choosing_target = false;
+    build_manual(&mut run, &mut playback, &mut manual, &mut cmds);
     state.set(GameState::Battle);
 }
 
@@ -1309,26 +1558,9 @@ fn draft_confirm(
 // Batalha
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn build_battle(run: &mut RunRes, pb: &mut PlaybackRes) {
-    let a = [run.team[0], run.team[1], run.team[2], run.team[3]];
-    let b = [run.enemy[0], run.enemy[1], run.enemy[2], run.enemy[3]];
-    let seed = run.rng.next_u64();
-    let enemy_mods = FormationMods {
-        dmg_permille: 1000 + (run.wins as i32) * 110,
-        hp_permille: 1000 + (run.wins as i32) * 70,
-    };
-    let mut f = Formation4v4::new_with_mods(&run.roster, a, b, seed, run.mods, enemy_mods);
-    // IA adversária: ordem de movimento sorteada por batalha — cada confronto
-    // ganha variância tática real (a ordem do jogador continua sendo a do
-    // draft; UI de ordem configurável fica para a v0.6).
-    let mut ordem_ia = [0usize, 1, 2, 3];
-    run.rng.shuffle(&mut ordem_ia);
-    f.set_orders([0, 1, 2, 3], ordem_ia);
-    f.set_log(true);
-    let outcome = f.run();
-    let chains = f.chain_links();
-    let rounds = f.rounds() as u64;
-    let events = parse_all(f.events());
+fn build_battle(run: &mut RunRes, pb: &mut PlaybackRes, cmds: &mut Commands) {
+    let (a, b) = times_da_run(run);
+    let (outcome, chains, rounds, events, seed) = rodar_batalha_auto(run, &a, &b);
 
     let nomes = |comp: &[usize; 4]| -> String {
         comp.iter().map(|&i| run.roster.characters[i].name.clone()).collect::<Vec<_>>().join(", ")
@@ -1336,7 +1568,7 @@ fn build_battle(run: &mut RunRes, pb: &mut PlaybackRes) {
     turnrush_core::logger::kv(
         turnrush_core::logger::Level::Info,
         "battle_start",
-        "batalha 4v4 gerada",
+        "batalha 4v4 gerada (playback)",
         &[
             ("time_a", turnrush_core::logger::V::S(&nomes(&a))),
             ("time_b", turnrush_core::logger::V::S(&nomes(&b))),
@@ -1345,9 +1577,90 @@ fn build_battle(run: &mut RunRes, pb: &mut PlaybackRes) {
         ],
     );
 
+    preencher_playback_base(run, pb, &a, &b);
+    pb.events = events;
+    pb.outcome = outcome;
+    pb.chains = chains;
+    pb.rounds = rounds;
+    cmds.insert_resource(BattleMode::Playback);
+}
+
+/// Times (a, b) a partir do estado da run.
+fn times_da_run(run: &RunRes) -> ([usize; 4], [usize; 4]) {
+    (
+        [run.team[0], run.team[1], run.team[2], run.team[3]],
+        [run.enemy[0], run.enemy[1], run.enemy[2], run.enemy[3]],
+    )
+}
+
+/// Roda a batalha até o fim (modo automático) e devolve (outcome, cadeias,
+/// rodadas, eventos parseados, seed).
+fn rodar_batalha_auto(
+    run: &mut RunRes,
+    a: &[usize; 4],
+    b: &[usize; 4],
+) -> (Outcome, u64, u64, Vec<ParsedEvent>, u64) {
+    let seed = run.rng.next_u64();
+    let enemy_mods = FormationMods {
+        dmg_permille: 1000 + (run.wins as i32) * 110,
+        hp_permille: 1000 + (run.wins as i32) * 70,
+    };
+    let mut f = Formation4v4::new_with_mods(&run.roster, *a, *b, seed, run.mods, enemy_mods);
+    // IA adversária: ordem de movimento sorteada por batalha — cada confronto
+    // ganha variância tática real (a ordem do jogador continua sendo a do
+    // draft; UI de ordem configurável fica para a v0.7).
+    let mut ordem_ia = [0usize, 1, 2, 3];
+    run.rng.shuffle(&mut ordem_ia);
+    f.set_orders([0, 1, 2, 3], ordem_ia);
+    f.set_log(true);
+    let outcome = f.run();
+    let chains = f.chain_links();
+    let rounds = f.rounds() as u64;
+    let events = parse_all(f.events());
+    (outcome, chains, rounds, events, seed)
+}
+
+/// Batalha MANUAL: engine vivo por passos, lado 0 = jogador.
+fn build_manual(run: &mut RunRes, pb: &mut PlaybackRes, manual: &mut ManualRes, cmds: &mut Commands) {
+    let (a, b) = times_da_run(run);
+    let seed = run.rng.next_u64();
+    let enemy_mods = FormationMods {
+        dmg_permille: 1000 + (run.wins as i32) * 110,
+        hp_permille: 1000 + (run.wins as i32) * 70,
+    };
+    let mut f = Formation4v4::new_with_mods(&run.roster, a, b, seed, run.mods, enemy_mods);
+    // IA adversária: ordem sorteada; a do jogador segue a do draft (slots).
+    let mut ordem_ia = [0usize, 1, 2, 3];
+    run.rng.shuffle(&mut ordem_ia);
+    f.set_orders([0, 1, 2, 3], ordem_ia);
+    f.set_manual_side(Some(0));
+    f.set_log(true);
+    *manual = ManualRes { f: Some(f), ev_cursor: 0, parsed: Vec::new(), auto: false };
+    cmds.insert_resource(BattleMode::Manual);
+
+    let nomes = |comp: &[usize; 4]| -> String {
+        comp.iter().map(|&i| run.roster.characters[i].name.clone()).collect::<Vec<_>>().join(", ")
+    };
+    turnrush_core::logger::kv(
+        turnrush_core::logger::Level::Info,
+        "battle_start",
+        "batalha 4v4 gerada (manual)",
+        &[
+            ("time_a", turnrush_core::logger::V::S(&nomes(&a))),
+            ("time_b", turnrush_core::logger::V::S(&nomes(&b))),
+            ("seed", turnrush_core::logger::V::U(seed)),
+            ("mods_a", turnrush_core::logger::V::S(&format!("{}/{}", run.mods.dmg_permille, run.mods.hp_permille))),
+        ],
+    );
+
+    preencher_playback_base(run, pb, &a, &b);
+}
+
+/// Base do PlaybackRes (mapa nome→índice, HP máx) comum aos dois modos.
+fn preencher_playback_base(run: &RunRes, pb: &mut PlaybackRes, a: &[usize; 4], b: &[usize; 4]) {
     let mut map = HashMap::new();
     let mut max_hp = [1i64; 8];
-    for (s, comp) in [(0usize, &a), (1usize, &b)] {
+    for (s, comp) in [(0usize, a), (1usize, b)] {
         for (k, &ci) in comp.iter().enumerate() {
             let c = &run.roster.characters[ci];
             map.insert(c.name.clone(), (s, k));
@@ -1355,13 +1668,13 @@ fn build_battle(run: &mut RunRes, pb: &mut PlaybackRes) {
         }
     }
     *pb = PlaybackRes {
-        events,
+        events: Vec::new(),
         idx: 0,
         wait: 0.6,
         finished: false,
-        outcome,
-        chains,
-        rounds,
+        outcome: Outcome::Draw,
+        chains: 0,
+        rounds: 0,
         map,
         max_hp,
         taken: [0; 8],
@@ -1451,8 +1764,8 @@ fn battle_playback(
     time: Res<Time>,
     ff: Res<FastForward>,
     mut pb: ResMut<PlaybackRes>,
-    mut log: Query<&mut Text, With<BattleLogText>>,
-    mut header: Query<&mut Text, (With<BattleHeader>, Without<BattleLogText>)>,
+    mut log: BattleLogTextQuery,
+    mut header: BattleHdrQuery,
     mut queue: ResMut<FxQueue>,
 ) {
     if pb.finished {
@@ -1470,9 +1783,26 @@ fn battle_playback(
     }
     let ev = pb.events[pb.idx].clone();
     pb.idx += 1;
+    process_event(&ev, &mut pb, &mut log, &mut header, &mut queue);
+    let (passo, rodada) = if ff.0 {
+        (STEP_SECS / 6.0, ROUND_SECS / 6.0)
+    } else {
+        (STEP_SECS, ROUND_SECS)
+    };
+    pb.wait = if ev.kind == EvKind::Round { rodada } else { passo };
+}
 
+/// Aplica um evento parseado: HP/log/cabeçalho + tradução para a cena.
+/// Comum ao playback automático e ao modo manual (mesma fidelidade visual).
+fn process_event(
+    ev: &ParsedEvent,
+    pb: &mut PlaybackRes,
+    log: &mut BattleLogTextQuery,
+    header: &mut BattleHdrQuery,
+    queue: &mut FxQueue,
+) {
     let mut log_str = if let Ok(t) = log.single_mut() { t.to_string() } else { String::new() };
-    apply_event(&mut pb, &ev, &mut log_str);
+    apply_event(pb, ev, &mut log_str);
     if let Ok(mut t) = log.single_mut() {
         *t = Text::new(log_str);
     }
@@ -1535,13 +1865,258 @@ fn battle_playback(
         }
         _ => {}
     }
+}
 
-    let (passo, rodada) = if ff.0 {
-        (STEP_SECS / 6.0, ROUND_SECS / 6.0)
-    } else {
-        (STEP_SECS, ROUND_SECS)
-    };
-    pb.wait = if ev.kind == EvKind::Round { rodada } else { passo };
+/// Tick da batalha MANUAL: drena eventos com o mesmo pacing do playback,
+/// pausa quando uma decisão do jogador é necessária e avança a engine um
+/// passo atômico por vez ([`Formation4v4::advance_one`]).
+#[allow(clippy::too_many_arguments)]
+fn manual_tick(
+    time: Res<Time>,
+    ff: Res<FastForward>,
+    run: Res<RunRes>,
+    mut manual: ResMut<ManualRes>,
+    mut pb: ResMut<PlaybackRes>,
+    mut pending: ResMut<PendingUi>,
+    mut log: BattleLogTextQuery,
+    mut header: BattleHdrQuery,
+    mut queue: ResMut<FxQueue>,
+) {
+    // desestrutura para satisfazer o borrowck (ResMut deref é opaco)
+    let ManualRes { f, ev_cursor, parsed, auto } = &mut *manual;
+    let Some(f) = f.as_mut() else { return };
+    if pb.finished {
+        return; // battle_finish conduz a transição
+    }
+    pb.wait -= time.delta_secs();
+    if pb.wait > 0.0 {
+        return;
+    }
+
+    // 1) drena um evento por tick (mesmo ritmo do playback automático)
+    if *ev_cursor < parsed.len() {
+        let ev = parsed[*ev_cursor].clone();
+        *ev_cursor += 1;
+        process_event(&ev, &mut pb, &mut log, &mut header, &mut queue);
+        let (passo, rodada) = if ff.0 {
+            (STEP_SECS / 6.0, ROUND_SECS / 6.0)
+        } else {
+            (STEP_SECS, ROUND_SECS)
+        };
+        pb.wait = if ev.kind == EvKind::Round { rodada } else { passo };
+        return;
+    }
+
+    // 2) batalha concluída → entrega o resultado para o battle_finish
+    if let Some(outcome) = f.outcome_opt() {
+        pb.finished = true;
+        pb.wait = 1.1;
+        pb.outcome = outcome;
+        pb.chains = f.chain_links();
+        pb.rounds = f.rounds() as u64;
+        return;
+    }
+
+    // 3) decisão pendente → painel do jogador (ou resolução automática)
+    if f.pending_decision().is_some() {
+        if *auto {
+            f.auto_resolve_pending();
+            pb.wait = 0.12;
+            return;
+        }
+        if !pending.active {
+            let p = f.pending_decision().expect("decisão verificada acima");
+            let ci = run.team[p.slot.min(run.team.len().saturating_sub(1))];
+            let c = &run.roster.characters[ci.min(run.roster.len().saturating_sub(1))];
+            pending.active = true;
+            pending.choosing_target = false;
+            pending.name = p.name.clone();
+            pending.chakra = p.chakra;
+            pending.mystery_ready = p.mystery_ready;
+            pending.mystery_cost = p.mystery_cost;
+            pending.mystery_name = c.mystery.name.clone();
+            pending.mystery_desc = c.mystery.effect.clone();
+            pending.standard_name = c.standard.name.clone();
+            for (i, b2) in f.side_brief(1).iter().enumerate() {
+                pending.targets[i] = (
+                    b2.name.clone(),
+                    if b2.hp_max > 0 { b2.hp * 100 / b2.hp_max } else { 0 },
+                    b2.alive,
+                );
+            }
+        }
+        return; // aguarda o clique do jogador
+    }
+
+    // 4) avança um passo atômico e enfileira os eventos novos
+    let before = f.events().len();
+    f.advance_one();
+    for linha in &f.events()[before..] {
+        parsed.push(parse_line(linha));
+    }
+    pb.wait = 0.05;
+}
+
+/// Sincroniza visibilidade e textos do painel de decisão manual.
+#[allow(clippy::type_complexity)] // queries com Without explícito (B0001)
+fn sync_decision_panel(
+    pending: Res<PendingUi>,
+    mut panel: Query<&mut Visibility, (With<DecPanel>, Without<DecTargetRow>)>,
+    mut trow: Query<&mut Visibility, (With<DecTargetRow>, Without<DecPanel>)>,
+    // `Without` obrigatório: Bevy exige disjunção PROVÁVEL entre &mut Text
+    // do mesmo sistema (With<> sozinho não basta — erro B0001 em runtime).
+    mut title: Query<
+        &mut Text,
+        (With<DecTitleText>, Without<DecMysteryLabel>, Without<DecStandardLabel>, Without<DecTargetLabel>),
+    >,
+    mut mlabel: Query<
+        &mut Text,
+        (With<DecMysteryLabel>, Without<DecTitleText>, Without<DecStandardLabel>, Without<DecTargetLabel>),
+    >,
+    mut slabel: Query<
+        &mut Text,
+        (With<DecStandardLabel>, Without<DecTitleText>, Without<DecMysteryLabel>, Without<DecTargetLabel>),
+    >,
+    mut tlabels: Query<
+        (&DecTargetLabel, &mut Text),
+        (Without<DecTitleText>, Without<DecMysteryLabel>, Without<DecStandardLabel>),
+    >,
+) {
+    if !pending.is_changed() {
+        return;
+    }
+    if let Ok(mut v) = panel.single_mut() {
+        *v = if pending.active { Visibility::Visible } else { Visibility::Hidden };
+    }
+    if let Ok(mut v) = trow.single_mut() {
+        *v = if pending.active && pending.choosing_target {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+    if let Ok(mut t) = title.single_mut() {
+        *t = if pending.active {
+            Text::new(format!(
+                "Sua vez — {} · chakra {}\n{}",
+                pending.name, pending.chakra, pending.mystery_desc
+            ))
+        } else {
+            Text::new("Sua vez")
+        };
+    }
+    if let Ok(mut t) = mlabel.single_mut() {
+        *t = if pending.mystery_ready {
+            Text::new(format!(
+                "Mystery «{}» · -{} chakra",
+                pending.mystery_name, pending.mystery_cost
+            ))
+        } else {
+            Text::new(format!("Mystery «{}» · indisponível", pending.mystery_name))
+        };
+    }
+    if let Ok(mut t) = slabel.single_mut() {
+        *t = Text::new(format!("Padrão «{}» → alvo…", pending.standard_name));
+    }
+    for (lbl, mut t) in tlabels.iter_mut() {
+        let (nome, hp, vivo) = &pending.targets[lbl.0.min(3)];
+        *t = if *vivo {
+            Text::new(format!("{nome} · {hp}%"))
+        } else {
+            Text::new(format!("{nome} · caído"))
+        };
+    }
+}
+
+/// Cliques do painel de decisão: Mystery / Padrão (→ escolha de alvo) / Auto.
+fn decision_click(
+    mut manual: ResMut<ManualRes>,
+    mut pending: ResMut<PendingUi>,
+    q: Query<(&Interaction, &DecBtn), Changed<Interaction>>,
+) {
+    if !pending.active {
+        return;
+    }
+    for (inter, b) in q.iter() {
+        if *inter != Interaction::Pressed {
+            continue;
+        }
+        match b.0 {
+            DecKind::Mystery => {
+                if let Some(f) = manual.f.as_mut() {
+                    f.submit(ActionChoice::Mystery);
+                }
+                pending.active = false;
+            }
+            DecKind::Standard => {
+                pending.choosing_target = true;
+            }
+            DecKind::Auto => {
+                manual.auto = true;
+                pending.active = false;
+            }
+        }
+        if !pending.active {
+            pending.choosing_target = false;
+            turnrush_core::logger::kv(
+                turnrush_core::logger::Level::Info,
+                "manual_decision",
+                "decisão manual submetida",
+                &[("tipo", turnrush_core::logger::V::S(match b.0 {
+                    DecKind::Mystery => "mystery",
+                    DecKind::Auto => "auto",
+                    DecKind::Standard => "standard",
+                }))],
+            );
+        }
+    }
+}
+
+/// Clique em alvo inimigo (ataque padrão com alvo escolhido) ou Auto-alvo.
+#[allow(clippy::type_complexity)] // query de Interaction com filtro de estado
+fn target_click(
+    mut manual: ResMut<ManualRes>,
+    mut pending: ResMut<PendingUi>,
+    targets: Query<(&Interaction, &DecTargetBtn), (Changed<Interaction>, Without<DecTargetAutoBtn>)>,
+    autos: Query<&Interaction, (With<DecTargetAutoBtn>, Changed<Interaction>)>,
+) {
+    if !pending.active || !pending.choosing_target {
+        return;
+    }
+    for (inter, tb) in targets.iter() {
+        if *inter != Interaction::Pressed {
+            continue;
+        }
+        let slot = tb.0.min(3);
+        if !pending.targets[slot].2 {
+            continue; // alvo caído — ignora
+        }
+        if let Some(f) = manual.f.as_mut() {
+            f.submit(ActionChoice::Standard { target: Some(slot) });
+            turnrush_core::logger::kv(
+                turnrush_core::logger::Level::Info,
+                "manual_target",
+                "alvo do padrão escolhido",
+                &[
+                    ("slot", turnrush_core::logger::V::U(slot as u64)),
+                    ("nome", turnrush_core::logger::V::S(&pending.targets[slot].0)),
+                ],
+            );
+        }
+        pending.active = false;
+        pending.choosing_target = false;
+        return;
+    }
+    for inter in autos.iter() {
+        if *inter == Interaction::Pressed {
+            if let Some(f) = manual.f.as_mut() {
+                f.submit(ActionChoice::Standard { target: None });
+            }
+            pending.active = false;
+            pending.choosing_target = false;
+            return;
+        }
+    }
 }
 
 /// Ícone de estado pelo texto do log (queimadura/veneno/controle/escudo).
@@ -1649,8 +2224,11 @@ fn battle_finish(
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn reward_click(
+    mut cmds: Commands,
     mut run: ResMut<RunRes>,
     mut pb: ResMut<PlaybackRes>,
+    mut manual: ResMut<ManualRes>,
+    mut pending: ResMut<PendingUi>,
     mut state: ResMut<NextState<GameState>>,
     q: Query<(&Interaction, &RewardBtn), Changed<Interaction>>,
 ) {
@@ -1679,7 +2257,9 @@ fn reward_click(
             "aprimoramento escolhido",
             &[("tipo", turnrush_core::logger::V::S(tipo))],
         );
-        build_battle(&mut run, &mut pb);
+        pending.active = false;
+        pending.choosing_target = false;
+        build_manual(&mut run, &mut pb, &mut manual, &mut cmds);
         state.set(GameState::Battle);
         break;
     }

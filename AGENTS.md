@@ -15,7 +15,8 @@ Guide for AI agents working in this repo. Read fully before editing. Keep change
 ```bash
 cargo test --workspace                                    # all tests must pass
 cargo clippy --workspace --all-targets -- -D warnings     # zero-warnings policy
-cargo run -p turnrush-sim -- --check                      # smoke: roster + battles + event counts
+cargo run -p turnrush-game -- --check                     # smoke: headless battle + event counts
+cargo run -p turnrush-sim -- --formation-gate             # 4v4 balance gate (winrates)
 cargo run -p turnrush-game -- --shot /tmp/shots           # 5 headless screenshots (needs Xvfb + lavapipe)
 cargo run -p turnrush-game                                # playable client (menu → draft → battle)
 ```
@@ -38,6 +39,7 @@ cargo run -p turnrush-game                                # playable client (men
 - `Camera2d` is mandatory, else screen is blank.
 - `Node` default flex direction is **Row** — screens in column need explicit `FlexDirection::Column`.
 - Two overlapping `Query<&mut Text>` in different systems **panics at system init** — keep text queries disjoint (filter by component marker).
+- **B0001 within a single system**: `With<X>` does NOT prove disjointness to the scheduler. Any two `&mut T` queries in the SAME system need explicit `Without` on each side (component-level reasoning only). Caught via `--shot` (headless `--check` does not exercise schedule conflicts).
 - Inserting resources via `Commands` between systems needs apply-deferred; simpler: generate assets in `PreStartup` (sprites.rs does this).
 - `Anchor` is a tuple struct (e.g. `Anchor::CENTER_LEFT.0`).
 - Default font is ASCII-subset; the embedded `turnrush-game/assets/DejaVuSansMono.ttf` provides pt-BR accents — keep using it.
@@ -52,7 +54,7 @@ cargo run -p turnrush-game                                # playable client (men
 
 ## Agent verification loop
 
-1. Edit → `cargo test --workspace` → clippy `-D warnings` → `--check`.
+1. Edit → `cargo test --workspace` → clippy `-D warnings` → game `--check`.
 2. Combat/balance touched → run formation gate, paste numbers.
 3. Visuals touched → `--shot`, inspect PNGs (or point user to screenshots).
 4. Mechanics changed → update `docs/` + `CHANGELOG.md` in the same commit.

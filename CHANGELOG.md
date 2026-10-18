@@ -4,6 +4,46 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/);
 versões seguem [SemVer](https://semver.org/lang/pt-BR/). O jogo está em
 **fase de mecânica**: arte/sprites/nomes finais são esboços conscientes.
 
+## [0.6.0] — identidade própria + batalha MANUAL + partidas 2× mais rápidas
+
+### Adicionado
+- **Batalha manual (você comanda cada ação)**: o engine ganhou API por
+  passos (`advance_one`/`submit`/`pending_decision`) — na vez de cada
+  unidade sua, o painel inferior oferece a **Mystery** (custo de chakra
+  visível) ou o **Padrão com alvo clicável** (escolha o inimigo vivo, ou
+  Auto-alvo). Botão **Auto** entrega as decisões à IA quando quiser
+  assistir. O adversário continua sendo a IA calibrada do engine.
+- **Identidade original**: clãs **PYREBORN / DUSKMERE / THORNVALE /
+  SKYREND**, classes **Reaver / Bastion / Mender / Tactician**, 16
+  personagens renomeados (`docs/NAMING.md`). Zero referências a outros
+  jogos em docs, código e UI; sprites procedurais por (clã × classe) e
+  cena de batalha animada (lunge, flash, morte, números flutuantes,
+  banners ROUND/CHAIN, screen shake, brasas).
+- `AGENTS.md`/`CLAUDE.md` — guia para agentes de IA (invariantes, comandos,
+  lições do Bevy 0.20, loop de verificação).
+
+### Mudado (partidas mais rápidas e dinâmicas — pedido direto de playtest)
+- **Teto de rodadas: 24 → 12** (desempate por % de vida total).
+- **Chakra: 30 inicial (era 20) · +14/rodada (era +12)** — mysteries entram
+  mais cedo.
+- **Ritmo de dano global ×2.5 (`DAMAGE_PACE` 2500‰)** — aplicado
+  simetricamente aos dois lados (DWC recalibra; winrates preservados).
+  Medição Monte Carlo (300 batalhas): **22.4 rodadas médias → 7.9**, com
+  **94% das partidas terminando por derrota real** (antes: guerra de
+  atrito até o teto).
+- Pacing do playback: passo 0.36s → 0.30s; rodada 0.95s → 0.80s.
+- Como Jogar e menu atualizados ao novo modo manual e números.
+
+### Técnico
+- Engine: máquina de fases (`Phase`) equivalente ao loop compacto — teste
+  de equivalência `run()` vs `advance_one` garante eventos idênticos no
+  modo automático; escolhas inválidas caem defensivamente para o padrão
+  (nunca trava); decisões manuais não sofrem jitter de timing (o jitter
+  modela imperfeição da IA, não do humano).
+- Cliente: `process_event` compartilhado entre playback e modo manual
+  (mesma fidelidade visual); 48 testes no core (+4 novos) e clippy zero
+  warnings nos 3 crates.
+
 ## [0.5.0] — mecânica + menu funcional + documentação completa
 
 ### Adicionado

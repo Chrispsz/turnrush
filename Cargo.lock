@@ -4158,11 +4158,11 @@ dependencies = [
 
 [[package]]
 name = "turnrush-core"
-version = "0.5.0"
+version = "0.6.0"
 
 [[package]]
 name = "turnrush-game"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "bevy",
  "turnrush-core",
@@ -4170,7 +4170,7 @@ dependencies = [
 
 [[package]]
 name = "turnrush-sim"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "turnrush-core",
 ]

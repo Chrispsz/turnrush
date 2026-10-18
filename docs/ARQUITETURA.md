@@ -87,7 +87,7 @@ turnrush-core::Formation4v4        ← comps + seed + FormationMods (DWC)
   multiplicadores (DWC, escalada, febre, buffs, auras). Zero float no caminho
   quente; sem `unsafe`.
 - **Testes de determinismo**: mesma seed ⇒ mesmo `Outcome`, mesmos eventos e
-  mesmos contadores de cadeia (cobertos nos 44 testes do workspace).
+  mesmos contadores de cadeia (cobertos nos 51 testes do workspace).
 - **Seed documentada nos logs**: `battle_start` registra seed e mods —
   qualquer partida pode ser reproduzida e auditada.
 
@@ -143,6 +143,37 @@ calibração oscilar. Duas correções simétricas e semeadas na engine:
 2. **Jitter de timing de mystery** (1/4 de segurar por turno em `act`):
    modela imperfeição humana de timing e dá gradiente contínuo aos winrates.
 
+## Batalha manual — engine por passos (v0.6)
+
+O `Formation4v4` virou uma **máquina de fases** (`RoundStart → Action →
+RoundEnd → Done`) com duas superfícies sobre a mesma matemática:
+
+- **`run()`** — o caminho compacto de sempre (simulador, Monte Carlo, testes).
+  Loop sobre os passos; pendências manuais (se houver) são resolvidas pela
+  regra da IA — compatibilidade total.
+- **`advance_one()` + `submit()`** — a superfície interativa do jogo: cada
+  chamada avança **um passo atômico** (abertura de rodada, a ação de uma
+  unidade + cadeias, ou o fechamento) e **pausa** quando o lado manual
+  (`set_manual_side(Some(0))`) precisa decidir — `pending_decision()` expõe
+  unidade, chakra e disponibilidade da mystery; o cliente responde com
+  `submit(Mystery)` ou `submit(Standard { target })` (ou
+  `auto_resolve_pending()` para o modo Auto).
+
+Garantias:
+
+- **Equivalência comprovada**: teste `avanco_por_passos_igual_a_run` compara
+  `run()` vs loop de `advance_one()` — mesmos eventos, mesmo resultado.
+- **Defensiva**: escolha inválida (mystery sem chakra/em cooldown, alvo
+  morto/inexistente) cai para o ataque padrão automático — a engine nunca
+  trava.
+- **Determinismo preservado**: decisões manuais não consomem RNG; o jitter
+  de timing continua sendo aplicado só à IA (imperfeição da máquina, não do
+  humano). Mesma seed ⇒ mesma sequência de eventos no modo automático.
+- **Ritmo (v0.6)**: teto 12 rodadas, chakra 30/+14 e `DAMAGE_PACE = 2500‰`
+  (dano direto ×2.5, simétrico) — batalhas médias de ~8 rodadas com 94%
+  terminando por derrota real (antes: 22.4 rodadas de atrito até o desempate).
+  Escala global não move winrates: o DWC recalibra por composição.
+
 ## CI (GitHub Actions)
 
 **Build & Balance CI** (`build.yml`) — dispara em push/PR, `workflow_dispatch`
@@ -150,7 +181,7 @@ e **cron noturno `0 7 * * *`** (04:00 em São Paulo; Monte Carlo completo):
 
 | Job | O que faz |
 |---|---|
-| `test` | `cargo test --workspace --release` (44 testes) |
+| `test` | `cargo test --workspace --release` (51 testes) |
 | `balance` | gate 1v1 (`--quick --gate`) + publica `balance-report.json` |
 | `balance-formation` | gate 4v4 (`--formation4v4 --formation-gate --formation-sims 150`) + publica relatório |
 | `build-linux` | build release do workspace + smoke `turnrush-game --check` + artifact |

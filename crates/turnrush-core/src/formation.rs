@@ -29,11 +29,18 @@ pub use crate::types::Outcome;
 /// Tamanho da formação (4v4).
 pub const FORMATION_SIZE: usize = 4;
 /// Máximo de rodadas antes do desempate por % de vida.
-pub const MAX_ROUNDS: usize = 24;
+///
+/// v0.6: reduzido de 24 para 12 — partidas mais curtas e dinâmicas; o
+/// desempate por % de vida total resolve confrontos que se arrastam.
+pub const MAX_ROUNDS: usize = 12;
 /// Chakra inicial de cada unidade.
-const CHAKRA_START: i32 = 20;
+///
+/// v0.6: 30 (era 20) — mysteries entram mais cedo, rodadas rendem mais ação.
+const CHAKRA_START: i32 = 30;
 /// Chakra regenerado por rodada.
-const CHAKRA_GAIN: i32 = 12;
+///
+/// v0.6: 14 (era 12) — cadência de mysteries mais rápida, batalhas mais curtas.
+const CHAKRA_GAIN: i32 = 14;
 /// Teto de chakra.
 const CHAKRA_CAP: i32 = 100;
 /// Rodadas de dano contínuo (Queimadura/Veneno).
@@ -42,6 +49,69 @@ const DOT_TURNS: u8 = 2;
 const DOT_ATK_PCT: i32 = 10;
 /// Limite de elos por cadeia de perseguição (prova contra loops).
 const CHAIN_CAP: usize = 12;
+
+/// Ritmo de dano do 4v4 (per-mille).
+///
+/// v0.6: 2500 (×2.5) — com o teto de 12 rodadas, o dano nominal do roster
+/// levava TODAS as batalhas ao desempate por HP% (guerra de atrito). Escalar
+/// o dano de AMBOS os lados igualmente preserva o balanceamento relativo
+/// (o DWC recalibra por composição) e faz as partidas terminarem por
+/// derrota real, mais rápido e mais dinâmico.
+const DAMAGE_PACE: i32 = 2500;
+
+/// Escala o dano direto pelo ritmo global (mantém log ↔ dano fiéis).
+fn pace(dmg: i32) -> i32 {
+    dmg * DAMAGE_PACE / PER_MILLE
+}
+
+/// Escolha manual do jogador para a ação da unidade no turno dela.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActionChoice {
+    /// Conjure a mystery (o alvo segue a especialização da habilidade).
+    Mystery,
+    /// Ataque padrão; `Some(slot)` = alvo escolhido no lado inimigo,
+    /// `None` = primeiro inimigo vivo (regra da IA).
+    Standard { target: Option<usize> },
+}
+
+/// Decisão aguardando o jogador (lado interativo).
+#[derive(Clone, Debug)]
+pub struct PendingDecision {
+    /// Lado que age (0 = jogador, 1 = adversário).
+    pub side: usize,
+    /// Slot da unidade que age (índice na formação).
+    pub slot: usize,
+    /// Nome da unidade.
+    pub name: String,
+    /// Chakra atual da unidade.
+    pub chakra: i32,
+    /// Mystery pronta (cooldown zerado e chakra suficiente)?
+    pub mystery_ready: bool,
+    /// Custo de chakra da mystery.
+    pub mystery_cost: i32,
+}
+
+/// Resumo de uma unidade para a interface (botões de alvo, barras).
+#[derive(Clone, Debug)]
+pub struct UnitBrief {
+    pub name: String,
+    pub hp: i32,
+    pub hp_max: i32,
+    pub alive: bool,
+}
+
+/// Fase corrente da máquina de estados da batalha.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Phase {
+    /// Abertura da rodada: chakra/cooldowns/DoT.
+    RoundStart,
+    /// Ações intercaladas: `step` = 1º..4º da ordem, `sub` = 0/1 (lado).
+    Action { step: usize, sub: usize },
+    /// Fechamento da rodada: curas de passiva.
+    RoundEnd,
+    /// Batalha concluída (outcome preenchido).
+    Done,
+}
 
 /// Modificadores de calibração por composição (DWC do 4v4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -144,6 +214,15 @@ pub struct Formation4v4 {
     mysteries_used: u64,
     unmodeled: Vec<String>,
     outcome: Option<Outcome>,
+    // ── máquina de fases / modo interativo ──
+    phase: Phase,
+    started: bool,
+    first_starter: usize,
+    starter: usize,
+    /// Lado que decide manualmente (None = totalmente automático).
+    manual_side: Option<usize>,
+    submitted: Option<ActionChoice>,
+    pending: Option<PendingDecision>,
 }
 
 /// Primeiro `N%` após a palavra-chave.
@@ -256,6 +335,13 @@ impl Formation4v4 {
             mysteries_used: 0,
             unmodeled: Vec::new(),
             outcome: None,
+            phase: Phase::RoundStart,
+            started: false,
+            first_starter: 0,
+            starter: 0,
+            manual_side: None,
+            submitted: None,
+            pending: None,
         }
     }
 
@@ -380,46 +466,191 @@ impl Formation4v4 {
     }
 
     /// Executa a batalha completa. Idempotente: se já rodou, devolve o resultado.
+    ///
+    /// Com lado manual configurado ([`Self::set_manual_side`]) as decisões
+    /// pendentes são resolvidas pela regra da IA (compatibilidade com o
+    /// simulador) — para jogo manual use [`Self::advance_one`] + [`Self::submit`].
     pub fn run(&mut self) -> Outcome {
         if let Some(o) = self.outcome {
             return o;
         }
-        self.ev(format!(
-            "── batalha 4v4 ── A: [{}] vs B: [{}]",
-            self.sides[0].units.iter().map(|u| u.name.as_str()).collect::<Vec<_>>().join(", "),
-            self.sides[1].units.iter().map(|u| u.name.as_str()).collect::<Vec<_>>().join(", ")
-        ));
-        // moeda: quem abre a 1ª rodada (simetria; depois alterna)
-        let first_starter = self.rng.range(2);
-        while self.round < MAX_ROUNDS {
-            if self.sides[0].defeated() || self.sides[1].defeated() {
-                break;
+        while self.phase != Phase::Done {
+            if self.pending.is_some() {
+                self.auto_resolve_pending();
             }
-            self.round += 1;
-            let starter = (first_starter + self.round - 1) % 2;
+            self.advance_one();
+        }
+        self.outcome.expect("fase Done sem outcome")
+    }
+
+    // ── API interativa (v0.6): batalha por passos com decisão manual ──
+
+    /// Define o lado que decide manualmente (0 = jogador). `None` volta ao
+    /// modo totalmente automático (comportamento do simulador).
+    pub fn set_manual_side(&mut self, side: Option<usize>) {
+        self.manual_side = side;
+    }
+
+    /// Decisão aguardando o jogador, se houver.
+    pub fn pending_decision(&self) -> Option<&PendingDecision> {
+        self.pending.as_ref()
+    }
+
+    /// Submete a escolha do jogador para a decisão pendente.
+    ///
+    /// Escolha inválida (mystery sem chakra/em cooldown, alvo morto) cai
+    /// defensivamente para o ataque padrão automático — a UI deve prevenir,
+    /// mas a engine nunca trava.
+    pub fn submit(&mut self, choice: ActionChoice) {
+        if self.pending.is_none() {
+            return;
+        }
+        self.pending = None;
+        self.submitted = Some(choice);
+    }
+
+    /// Resolve a decisão pendente com a regra da IA (mystery pronta com
+    /// jitter de timing, senão padrão). Usado pelo `run()` e pelo botão
+    /// "Auto" do cliente.
+    pub fn auto_resolve_pending(&mut self) {
+        if self.pending.is_none() {
+            return;
+        }
+        let p = self.pending.as_ref().expect("pending verificado");
+        let (side, slot) = (p.side, p.slot);
+        let ready = self.mystery_castable(side, slot);
+        let segura = ready && self.rng.range(4) == 0;
+        self.pending = None;
+        self.submitted = Some(if ready && !segura {
+            ActionChoice::Mystery
+        } else {
+            ActionChoice::Standard { target: None }
+        });
+    }
+
+    /// Batalha concluída?
+    pub fn is_done(&self) -> bool {
+        self.phase == Phase::Done
+    }
+
+    /// Resultado, quando concluída.
+    pub fn outcome_opt(&self) -> Option<Outcome> {
+        self.outcome
+    }
+
+    /// Resumo das unidades de um lado (nomes/HP para a interface).
+    pub fn side_brief(&self, side: usize) -> [UnitBrief; FORMATION_SIZE] {
+        std::array::from_fn(|i| {
+            let u = &self.sides[side].units[i];
+            UnitBrief { name: u.name.clone(), hp: u.hp.max(0), hp_max: u.hp_max, alive: u.alive }
+        })
+    }
+
+    /// Avança EXATAMENTE um passo atômico da batalha:
+    /// abertura de rodada, OU a ação de uma unidade (+ cadeias), OU o
+    /// fechamento da rodada. Pausa quando uma decisão manual é necessária —
+    /// nesse caso [`Self::pending_decision`] retorna `Some` e o cliente
+    /// deve chamar [`Self::submit`] (ou [`Self::auto_resolve_pending`])
+    /// antes do próximo `advance_one`.
+    pub fn advance_one(&mut self) {
+        if self.is_done() {
+            return;
+        }
+        if !self.started {
+            self.started = true;
             self.ev(format!(
-                "── rodada {} (abre: {}) ──",
-                self.round,
-                if starter == 0 { "A" } else { "B" }
+                "── batalha 4v4 ── A: [{}] vs B: [{}]",
+                self.sides[0].units.iter().map(|u| u.name.as_str()).collect::<Vec<_>>().join(", "),
+                self.sides[1].units.iter().map(|u| u.name.as_str()).collect::<Vec<_>>().join(", ")
             ));
-            self.round_start();
-            for step in 0..FORMATION_SIZE {
+            // moeda: quem abre a 1ª rodada (simetria; depois alterna)
+            self.first_starter = self.rng.range(2);
+        }
+        match self.phase {
+            Phase::RoundStart => {
                 if self.sides[0].defeated() || self.sides[1].defeated() {
-                    break;
+                    self.finish();
+                    return;
                 }
-                for side_idx in [starter, 1 - starter] {
-                    if self.sides[side_idx].defeated() {
-                        break;
+                self.round += 1;
+                self.starter = (self.first_starter + self.round - 1) % 2;
+                self.ev(format!(
+                    "── rodada {} (abre: {}) ──",
+                    self.round,
+                    if self.starter == 0 { "A" } else { "B" }
+                ));
+                self.round_start();
+                self.phase = Phase::Action { step: 0, sub: 0 };
+            }
+            Phase::Action { step, sub } => {
+                if step >= FORMATION_SIZE || self.sides[0].defeated() || self.sides[1].defeated() {
+                    self.phase = Phase::RoundEnd;
+                    return;
+                }
+                let side = if sub == 0 { self.starter } else { 1 - self.starter };
+                let slot = self.sides[side].order[step];
+                if !self.sides[side].units[slot].alive {
+                    self.next_sub(step, sub);
+                    return;
+                }
+                if self.manual_side == Some(side) && self.submitted.is_none() {
+                    let u = &self.sides[side].units[slot];
+                    self.pending = Some(PendingDecision {
+                        side,
+                        slot,
+                        name: u.name.clone(),
+                        chakra: u.chakra,
+                        mystery_ready: self.mystery_castable(side, slot),
+                        mystery_cost: u.mystery.chakra,
+                    });
+                    return; // aguarda submit/auto
+                }
+                let choice = self.submitted.take();
+                self.pending = None;
+                match choice {
+                    Some(ActionChoice::Mystery) if self.mystery_castable(side, slot) => {
+                        self.cast_mystery(side, slot);
                     }
-                    let slot = self.sides[side_idx].order[step];
-                    if !self.sides[side_idx].units[slot].alive {
-                        continue;
+                    Some(ActionChoice::Standard { target }) => {
+                        self.standard_attack(side, slot, target);
                     }
-                    self.act(side_idx, slot);
-                    self.resolve_chases(side_idx);
+                    // Lado automático (ou escolha manual inválida): regra da IA
+                    // — mystery quando pronta, com jitter de timing.
+                    _ => self.act(side, slot),
+                }
+                self.resolve_chases(side);
+                self.next_sub(step, sub);
+            }
+            Phase::RoundEnd => {
+                self.round_end();
+                if self.round >= MAX_ROUNDS || self.sides[0].defeated() || self.sides[1].defeated() {
+                    self.finish();
+                } else {
+                    self.phase = Phase::RoundStart;
                 }
             }
-            self.round_end();
+            Phase::Done => {}
+        }
+    }
+
+    fn next_sub(&mut self, step: usize, sub: usize) {
+        self.phase = if sub == 0 {
+            Phase::Action { step, sub: 1 }
+        } else {
+            Phase::Action { step: step + 1, sub: 0 }
+        };
+    }
+
+    fn mystery_castable(&self, side: usize, slot: usize) -> bool {
+        let u = &self.sides[side].units[slot];
+        u.mcd == 0 && u.chakra >= u.mystery.chakra && u.mystery.chakra > 0
+    }
+
+    /// Calcula e registra o resultado final (idempotente).
+    fn finish(&mut self) {
+        if self.outcome.is_some() {
+            self.phase = Phase::Done;
+            return;
         }
         let outcome = if self.sides[1].defeated() {
             Outcome::TeamAWin
@@ -443,7 +674,7 @@ impl Formation4v4 {
             self.mysteries_used
         ));
         self.outcome = Some(outcome);
-        outcome
+        self.phase = Phase::Done;
     }
 
     /// Início de rodada: chakra, cooldowns, buffs e dano contínuo.
@@ -542,7 +773,7 @@ impl Formation4v4 {
         if ready && !segura {
             self.cast_mystery(side_idx, slot);
         } else {
-            self.standard_attack(side_idx, slot);
+            self.standard_attack(side_idx, slot, None);
         }
     }
 
@@ -645,7 +876,7 @@ impl Formation4v4 {
                         (t.name.clone(), t.def, t.dmg_reduction_permille)
                     };
                     let eff_def = tdef * (100 - pierce_def_pct) / 100;
-                    let mut dmg = crate::combat::damage_after_def(atk, dmg_pct, eff_def);
+                    let mut dmg = pace(crate::combat::damage_after_def(atk, dmg_pct, eff_def));
                     // aura de equipe vs estado recém-aplicado
                     if applies != ComboState::None {
                         let bonus = self.sides[side_idx].units[slot]
@@ -683,7 +914,9 @@ impl Formation4v4 {
         self.pending_chase = queue;
     }
 
-    fn standard_attack(&mut self, side_idx: usize, slot: usize) {
+    /// Ataque padrão; `chosen` = alvo manual no lado inimigo (validado;
+    /// inválido/morto → primeiro vivo, regra da IA).
+    fn standard_attack(&mut self, side_idx: usize, slot: usize, chosen: Option<usize>) {
         let (sname, dmg_pct, applies) = {
             let u = &self.sides[side_idx].units[slot];
             (u.standard.name.clone(), u.standard.damage_pct, u.standard.applies_state)
@@ -693,7 +926,10 @@ impl Formation4v4 {
         if targets.is_empty() {
             return;
         }
-        let tslot = targets[0];
+        let tslot = match chosen {
+            Some(c) if c < FORMATION_SIZE && self.sides[enemy].units[c].alive => c,
+            _ => targets[0],
+        };
         let atk = self.sides[side_idx].units[slot].atk_eff();
         let dot_on_hit = self.sides[side_idx].units[slot].dot_on_hit;
         let self_bonus = self.sides[side_idx].units[slot].bonus_vs.clone();
@@ -701,7 +937,7 @@ impl Formation4v4 {
             let t = &self.sides[enemy].units[tslot];
             (t.name.clone(), t.def, t.dmg_reduction_permille, t.dot_turns > 0)
         };
-        let mut dmg = crate::combat::damage_after_def(atk, dmg_pct, tdef);
+        let mut dmg = pace(crate::combat::damage_after_def(atk, dmg_pct, tdef));
         if t_dot {
             if let Some((_, p)) = self_bonus.iter().find(|(st, _)| *st == ComboState::None) {
                 dmg = dmg * (PER_MILLE + p) / PER_MILLE;
@@ -805,7 +1041,7 @@ impl Formation4v4 {
             self.sides[side_idx].units[cslot].chased = true;
             let atk = self.sides[side_idx].units[cslot].atk_eff();
             let tdef = self.sides[enemy].units[tslot].def;
-            let dmg = crate::combat::damage_after_def(atk, cdmg_pct, tdef);
+            let dmg = pace(crate::combat::damage_after_def(atk, cdmg_pct, tdef));
             let tname = self.sides[enemy].units[tslot].name.clone();
             self.deal_damage(enemy, tslot, dmg, 0);
             self.chain_links += 1;
@@ -962,6 +1198,84 @@ mod tests {
         let _ = b.run();
         assert!(b.mysteries_used() > 0);
         assert!(b.rounds() <= MAX_ROUNDS);
+    }
+
+    /// v0.6: a máquina de fases (`advance_one`) deve produzir EXATAMENTE a
+    /// mesma sequência de eventos e o mesmo resultado do caminho compacto.
+    #[test]
+    fn avanco_por_passos_igual_a_run() {
+        let r = roster();
+        let mut b1 = Formation4v4::new(&r, [0, 1, 2, 0], [3, 4, 5, 3], 77);
+        let o1 = b1.run();
+
+        let mut b2 = Formation4v4::new(&r, [0, 1, 2, 0], [3, 4, 5, 3], 77);
+        while !b2.is_done() {
+            b2.advance_one();
+        }
+        assert_eq!(o1, b2.outcome_opt().expect("b2 concluída"));
+        assert_eq!(b1.events(), b2.events());
+        assert_eq!(b1.chain_links(), b2.chain_links());
+    }
+
+    /// v0.6: modo manual — o jogador submete escolhas e a batalha conclui;
+    /// decisões aparecem somente para o lado manual.
+    #[test]
+    fn modo_manual_aceita_escolhas() {
+        let r = roster();
+        let mut b = Formation4v4::new(&r, [0, 1, 2, 0], [3, 4, 5, 3], 55);
+        b.set_log(true);
+        b.set_manual_side(Some(0));
+        let mut decisoes = 0usize;
+        let mut guard = 0usize;
+        while !b.is_done() {
+            guard += 1;
+            assert!(guard < 5000, "batalha manual não converge");
+            if b.pending_decision().is_some() {
+                decisoes += 1;
+                let p = b.pending_decision().expect("pending");
+                assert_eq!(p.side, 0, "decisão deve ser sempre do lado manual");
+                // alterna: mystery quando pronta, senão padrão no alvo 0
+                if p.mystery_ready {
+                    b.submit(ActionChoice::Mystery);
+                } else {
+                    b.submit(ActionChoice::Standard { target: Some(0) });
+                }
+                assert!(b.pending_decision().is_none(), "submit deve consumir a pendência");
+            }
+            b.advance_one();
+        }
+        assert!(decisoes > 0, "lado manual deve gerar decisões");
+        assert!(b.outcome_opt().is_some());
+        assert!(b.rounds() <= MAX_ROUNDS);
+    }
+
+    /// v0.6: escolha inválida (alvo inexistente) cai para o padrão sem travar.
+    #[test]
+    fn escolha_invalida_cai_para_padrao() {
+        let r = roster();
+        let mut b = Formation4v4::new(&r, [0, 1, 2, 0], [3, 4, 5, 3], 66);
+        b.set_manual_side(Some(0));
+        let mut guard = 0usize;
+        while !b.is_done() {
+            guard += 1;
+            assert!(guard < 5000);
+            if b.pending_decision().is_some() {
+                // submit sempre inválido: alvo 9 não existe; mystery sem checar chakra
+                b.submit(ActionChoice::Standard { target: Some(9) });
+            }
+            b.advance_one();
+        }
+        assert!(b.outcome_opt().is_some());
+    }
+
+    /// v0.6: `run()` com lado manual resolve pendências como IA (compat).
+    #[test]
+    fn run_com_lado_manual_ainda_conclui() {
+        let r = roster();
+        let mut b = Formation4v4::new(&r, [0, 1, 2, 0], [3, 4, 5, 3], 44);
+        b.set_manual_side(Some(0));
+        let o = b.run();
+        assert!(b.outcome_opt() == Some(o));
     }
 
     #[test]

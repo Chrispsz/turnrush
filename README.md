@@ -12,7 +12,7 @@ e balanceamento Monte Carlo (DWC/LCE).
 |---|---|
 | **Download** | [Releases (AppImage)](https://github.com/Chrispsz/turnrush/releases/latest) |
 | **Docs** | [GDD](docs/GDD.md) · [Arquitetura](docs/ARQUITETURA.md) · [Personagens](docs/PERSONAGENS.md) · [Cartas](docs/CARTAS.md) · [Nomenclatura](docs/NAMING.md) · [Logs](docs/LOGS.md) |
-| **Status** | v0.5.0 — jogo 2D jogável offline vs IA, 44 testes, clippy limpo |
+| **Status** | v0.6.0 — batalha manual + partidas rápidas, 51 testes, clippy limpo |
 
 ## O que é
 
@@ -24,19 +24,23 @@ batalhas 4v4 com **cadeias de combo** (Lançamento → Empurrão → Derrubada),
 equilíbrio é **calibrado por dados** por um simulador Monte Carlo que roda no
 CI a cada commit.
 
-## O jogo hoje (v0.5.0)
+## O jogo hoje (v0.6.0)
 
 ```
-Menu → Como Jogar / Elenco → Draft (escolha 4 de 8) → Batalha 4v4
+Menu → Como Jogar / Elenco → Draft (escolha 4 de 8) → Batalha 4v4 MANUAL
      → Recompensa (+10% dano | +10% vida | +5%/+5%) → inimigo escala → 3 vitórias
 ```
 
-- **Modo offline completo**: o adversário é controlado pela IA da engine
-  (a mesma heurística validada pelo simulador Monte Carlo).
+- **Modo offline completo**: você **comanda cada ação** das suas unidades no
+  turno delas (painel de decisão: Mystery com custo de chakra, Padrão com
+  alvo clicável) e o adversário é controlado pela IA da engine — botão
+  **Auto** entrega o controle quando quiser só assistir.
 - **Batalha 4v4 por turnos**: ações intercaladas A-B-A-B por posição,
-  chakra por unidade (20 inicial, +12/rodada, teto 100), mysteries com
+  chakra por unidade (30 inicial, +14/rodada, teto 100), mysteries com
   cooldown, cadeias de perseguição (até 12 elos), passivas e dano contínuo
-  (Queimadura/Veneno).
+  (Queimadura/Veneno). **Partidas rápidas**: teto de 12 rodadas e ritmo de
+  dano ×2.5 — média de ~8 rodadas, 94% terminando por K.O. (antes:
+  22 rodadas de atrito).
 - **Menu funcional**: Como Jogar (regras fiéis à engine), Elenco (as 16
   cartas com kit completo) e botão **Acelerar (1×/6×)** na batalha.
 - **Determinismo total**: RNG xoshiro256** + matemática inteira (per-mille) —
@@ -54,9 +58,9 @@ Menu → Como Jogar / Elenco → Draft (escolha 4 de 8) → Batalha 4v4
   não é assimétrica por construção.
 - **DWC/LCE** — calibração Monte Carlo de todas as composições (DWC) e
   compensação de sorte em tempo real (LCE), com gate de equilíbrio no CI.
-- **Cliente Bevy 2D** — janela 1280×720, draft visual, playback animado da
-  batalha, recompensas e escalada do inimigo. Roster embutido no binário —
-  **zero assets externos**.
+- **Cliente Bevy 2D** — janela 1280×720, draft visual, batalha manual
+  (ou playback automático no botão Auto) com animações, recompensas e
+  escalada do inimigo. Roster embutido no binário — **zero assets externos**.
 - **Logs de sessão completos** — do iniciar ao fechar, em `~/TurnRush/logs`
   (`.log` legível + `.jsonl` estruturado), incluindo captura de
   SIGINT/SIGTERM/SIGHUP.
@@ -79,7 +83,7 @@ Ou baixe o **AppImage** da [última release](https://github.com/Chrispsz/turnrus
 ### Ferramentas de balanceamento
 
 ```bash
-cargo test --workspace --release                        # 44 testes
+cargo test --workspace --release                        # 51 testes
 cargo run --release -p turnrush-sim -- --match          # demonstra uma partida
 cargo run --release -p turnrush-sim -- --quick --gate   # gate de equilíbrio (CI)
 cargo run --release -p turnrush-sim --                  # calibração completa (Monte Carlo)
@@ -108,7 +112,7 @@ temática/mecânica, não pedra-papel-tesoura.
 |---|---|
 | **turnrush-core** | Motor determinístico (zero dependências): Formação 4v4 (chakra, cooldowns, cadeias de chase, passivas), draft simétrico + LCE, partida 1v1 de 9 rodadas, calibrador DWC, roster data-driven (contrato JSON v2), logs de sessão |
 | **turnrush-sim** | CLI: simulador Monte Carlo de composições (clãs puras + mistas), gate de equilíbrio de CI, diagnóstico de confrontos extremos, relatório JSON |
-| **turnrush-game** | Cliente 2D jogável (Bevy 0.20): menu, Como Jogar, Elenco, draft visual, batalha com playback animado (barras de HP, flashes, log, Acelerar 1×/6×), recompensas, escalada de inimigos, fim de run |
+| **turnrush-game** | Cliente 2D jogável (Bevy 0.20): menu, Como Jogar, Elenco, draft visual, **batalha manual** (painel Mystery/Padrão/alvo) ou Auto, barras de HP, flashes, log, Acelerar 1×/6×, recompensas, escalada de inimigos, fim de run |
 
 ## Documentação
 
@@ -132,7 +136,7 @@ temática/mecânica, não pedra-papel-tesoura.
 
 ## Desenvolvimento
 
-- `cargo test --workspace` — 44 testes (determinismo, simetria, chase, fórmulas, logger).
+- `cargo test --workspace` — 51 testes (determinismo, simetria, chase, fórmulas, manual, logger).
 - `--check` (headless) e `--shot` (screenshots reais das 5 telas) rodam em CI e em
   ambiente sem GPU via **Xvfb + lavapipe** — nunca dependemos da máquina do usuário
   para validar visual.

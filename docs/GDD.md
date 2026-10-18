@@ -30,15 +30,28 @@ Pilares:
 
 ```
 Menu → Draft: 8 cartas na mesa, escolha 4
-     → Batalha 4v4 (playback da engine)
+     → Batalha 4v4 MANUAL (você comanda cada ação)
      → vitória → Recompensa: +10% dano | +10% vida | +5%/+5%
      → próximo inimigo escala → … 3 vitórias = run completa
 ```
 
+- **Batalha manual (v0.6)**: a engine executa a batalha **por passos** e
+  **pausa na vez de cada unidade sua**. O painel inferior mostra a unidade
+  ativa (chakra atual) e oferece:
+  - **Mystery «nome» · -custo** — conjura a habilidade assinatura (o alvo
+    segue a especialização da carta: frente/todos/aliado mais ferido/2
+    aleatórios);
+  - **Padrão «nome» → alvo…** — ataque grátis com **alvo clicável** entre
+    os inimigos vivos (ou Auto-alvo: primeiro vivo);
+  - **Auto ▶** — entrega as próximas decisões à IA (assista a run);
+  Cadeias de perseguição continuam automáticas (1× por unidade por rodada).
+  As decisões do jogador não sofrem o jitter de timing da IA.
+
 - **Draft simétrico de formação**: 8 dos 16 personagens são sorteados como
   cartas — a oferta é única (o inimigo IA monta o time entre os 8 restantes,
   sem duplicar nomes). O jogador escolhe **4**.
-- **Batalha 4v4**: todas as regras da §3.
+- **Batalha 4v4**: todas as regras da §3 (agora comandadas pelo jogador —
+  botão Auto entrega o controle à IA quando quiser assistir).
 - **Recompensa pós-vitória**: um aprimoramento **persistente da run**
   (modificadores per-mille da formação): **Dano +10%**, **Vida +10%** ou
   **Equilíbrio +5%/+5%**. Curas e escudos escalam junto com o modificador de
@@ -58,10 +71,15 @@ Menu → Draft: 8 cartas na mesa, escolha 4
   passo 1 agem os primeiros de cada lado, no passo 2 os segundos, etc. Uma
   moeda decide quem abre a 1ª rodada e a abertura **alterna a cada rodada**:
   a iniciativa vale no máximo a 1ª ação, nunca uma vantagem composta.
-- **Chakra (por unidade)**: começa em **20**, regenera **+12 por rodada**,
+- **Chakra (por unidade)**: começa em **30**, regenera **+14 por rodada**,
   teto **100**. Mysteries custam **15–40** e têm **cooldown de 2–4 rodadas**
   (decrementa no início da rodada). O ataque padrão é **grátis** — sempre há
   opção.
+- **Ritmo de dano (×2.5)**: todo dano direto do 4v4 é multiplicado por
+  `DAMAGE_PACE = 2500‰` — simétrico para os dois lados (o DWC recalibra por
+  composição, winrates preservados). Existe para que as partidas terminem
+  por **derrota real** dentro do teto de rodadas, não por guerra de atrito
+  (medido: 22.4 rodadas médias → 7.9 com 94% de K.O.).
 - **Variância tática da engine**: 1/4 de chance (semeada, simétrica) de
   segurar a mystery por um turno — modela imperfeição de timing e dá
   gradiente contínuo aos winrates do Monte Carlo.
@@ -70,7 +88,7 @@ Menu → Draft: 8 cartas na mesa, escolha 4
 - **Escudos**: absorvem dano antes do HP; mysteries com **perfuração**
   ignoram parte do escudo (ex.: 50%) ou da defesa (ex.: 30%).
 - **Reflexo/contra-ataque** acontece em resposta a ataques padrão.
-- **Fim de batalha**: lado sem unidades vivas perde; após **24 rodadas**,
+- **Fim de batalha**: lado sem unidades vivas perde; após **12 rodadas**,
   vence o maior **% de vida total** — empate é empate (Draw).
 
 ### 3.1 Cadeias de combo (chase) — o coração tático
