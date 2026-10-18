@@ -133,6 +133,19 @@ impl BattleController {
                     CtlPhase::AwaitingPlayer { chase: true }
                 }
             }
+            PromptPhase::ChooseTactic => {
+                if self.auto_player {
+                    // determinístico e sem favoritismo ( alterna pela geração)
+                    let idx = (self.bt.generation() % 2) as usize;
+                    if self.submit(ChosenAction::PickTactic { index: idx }).is_err() {
+                        let _ = self.submit(ChosenAction::PickTactic { index: 0 });
+                    }
+                    CtlPhase::PlayingEvents
+                } else {
+                    self.cached_prompt = Some(prompt);
+                    CtlPhase::AwaitingPlayer { chase: false }
+                }
+            }
             PromptPhase::Over => {
                 self.finished = true;
                 self.outcome = self.bt.outcome();
@@ -299,9 +312,11 @@ mod tests {
                     pausou = true;
                     let p = ctl.prompt().expect("prompt");
                     assert_eq!(p.side, 0, "pausa é sempre no lado do jogador");
-                    // submete padrão e continua
+                    // submete padrão e continua (tática: adota a opção 0)
                     let acao = if chase {
                         ChosenAction::RejectChase
+                    } else if p.phase == turnrush_core::interactive::PromptPhase::ChooseTactic {
+                        ChosenAction::PickTactic { index: 0 }
                     } else {
                         ChosenAction::Act { kind: ActionKind::Standard, target: None }
                     };

@@ -351,6 +351,10 @@ pub struct PendingUi {
     /// mesma chave persiste, o painel NÃO é reenchido — protege a escolha
     /// de alvo do jogador do re-preenchimento por frame (feedback B1).
     pub key: Option<(u64, bool)>,
+    /// R1: janela de tática aberta (botões [1]/[2] escolhem a carta).
+    pub tactic: bool,
+    /// Descrições das 2 táticas ofertadas (linha de prévia).
+    pub tactic_descs: [String; 2],
 }
 
 // ── Marcadores do painel de decisão ──
@@ -2206,6 +2210,52 @@ fn preencher_painel(ctl: &mut BattleController, chase: bool, pending: &mut Pendi
     pending.choosing_target = false;
     pending.selected = None;
     pending.target_enemy = true;
+    // R1 (feedback): janela de tática — 2 cartas, escolha obrigatória
+    // (o inimigo já adotou a dele em silêncio; simetria de poder).
+    if p.phase == turnrush_core::interactive::PromptPhase::ChooseTactic {
+        pending.tactic = true;
+        pending.chase = false;
+        pending.choosing_target = false;
+        pending.selected = None;
+        if let Some([a, b]) = ctl.bt.tactic_offer() {
+            let pool = &turnrush_core::rewards::TACTIC_POOL;
+            let ca = &pool[a.min(pool.len() - 1)];
+            let cb = &pool[b.min(pool.len() - 1)];
+            pending.tactic_descs = [ca.desc.to_string(), cb.desc.to_string()];
+            pending.name = "Oferta de tática".to_string();
+            pending.hp = 0;
+            pending.hp_max = 0;
+            pending.fluxo = 0;
+            pending.actions = [
+                (format!("[1] {}", ca.name), 0, true, String::new()),
+                (format!("[2] {}", cb.name), 0, true, String::new()),
+                ("—".to_string(), 0, false, String::new()),
+                ("—".to_string(), 0, false, String::new()),
+            ];
+            pending.preview = format!("{}  ·  {}", ca.desc, cb.desc);
+        }
+        // timeline visível (mesma rotina da vez normal)
+        let tl = ctl.bt.timeline();
+        let cur = ctl.bt.timeline_cursor();
+        let mut texto = String::from("Ordem: ");
+        for (i, (side, slot)) in tl.iter().enumerate() {
+            if i > 0 {
+                texto.push(' ');
+            }
+            let nome = ctl.bt.unit(*side, *slot).name.chars().take(2).collect::<String>();
+            if i == cur {
+                texto.push_str(&format!("[{nome}]"));
+            } else if i < cur {
+                texto.push_str(&format!("{nome}·"));
+            } else {
+                texto.push_str(&nome);
+            }
+        }
+        pending.timeline = texto;
+        return;
+    }
+    pending.tactic = false;
+    pending.tactic_descs = [String::new(), String::new()];
     let u = ctl.bt.unit(p.side, p.slot);
     pending.name = u.name.clone();
     pending.hp = u.hp;
@@ -2416,6 +2466,13 @@ fn aplicar_evento(
             linha = "cadeia recusada (tática)".to_string();
             let _ = side;
         }
+        BattleEvent::TacticPicked { side, tactic } => {
+            // R1: só a tática do JOGADOR entra no log — a do inimigo é
+            // silenciosa por design (feedback: "ela vai decidir para ela").
+            if *side == 0 {
+                linha = format!("✦ tática adotada: {tactic}");
+            }
+        }
         BattleEvent::RoundEnd { .. } => {}
         BattleEvent::BattleOver { outcome } => {
             pb.outcome = *outcome;
@@ -2489,7 +2546,9 @@ fn sync_decision_panel(
         *v = if pending.active && pending.choosing_target { Visibility::Visible } else { Visibility::Hidden };
     }
     if let Ok(mut t) = title.single_mut() {
-        *t = if pending.active && !pending.chase {
+        *t = if pending.active && pending.tactic {
+            Text::new("Escolha uma tática — [1]/[2] adotam")
+        } else if pending.active && !pending.chase {
             Text::new(format!(
                 "Sua vez — {} · HP {}/{} · Fluxo ⚡{}",
                 pending.name, pending.hp, pending.hp_max, pending.fluxo
@@ -2603,6 +2662,26 @@ fn decision_click(
             kind_btn => {
                 if pending.chase {
                     continue; // na janela de chase só ENTER/ESC decidem
+                }
+                // R1: na janela de tática, [1]/[2] adotam a carta ofertada.
+                if pending.tactic {
+                    let idx = match kind_btn {
+                        DecKind::Standard => 0usize,
+                        DecKind::Skill => 1usize,
+                        _ => continue,
+                    };
+                    if let Some(ctl) = manual.ctl.as_mut() {
+                        match ctl.submit(ChosenAction::PickTactic { index: idx }) {
+                            Ok(()) => {
+                                pending.active = false;
+                                pending.tactic = false;
+                            }
+                            Err(e) => {
+                                pending.preview = format!("⚠ tática recusada: {e:?}");
+                            }
+                        }
+                    }
+                    continue;
                 }
                 let kind = match kind_btn {
                     DecKind::Standard => ActionKind::Standard,
@@ -2809,6 +2888,33 @@ fn battle_keys(
             pending.active = false;
             pending.chase = false;
             scene.chase_gold.clear();
+        }
+        return;
+    }
+    // R1: janela de tática — [1]/[2] adotam; nada mais responde.
+    if pending.tactic {
+        let idx = if keys.just_pressed(KeyCode::Digit1) {
+            Some(0usize)
+        } else if keys.just_pressed(KeyCode::Digit2) {
+            Some(1usize)
+        } else {
+            if keys.just_pressed(KeyCode::Space) {
+                ff.0 = !ff.0;
+            }
+            None
+        };
+        if let Some(index) = idx {
+            if let Some(ctl) = manual.ctl.as_mut() {
+                match ctl.submit(ChosenAction::PickTactic { index }) {
+                    Ok(()) => {
+                        pending.active = false;
+                        pending.tactic = false;
+                    }
+                    Err(e) => {
+                        pending.preview = format!("⚠ tática recusada: {e:?}");
+                    }
+                }
+            }
         }
         return;
     }

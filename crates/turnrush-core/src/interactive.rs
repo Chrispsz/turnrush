@@ -46,6 +46,10 @@ use crate::types::Outcome;
 
 /// Teto de rodadas: desempate por % de HP total.
 pub const MAX_ROUNDS: usize = 10;
+
+/// R1 (feedback 2026-10-18): oferta de tática a cada N rodadas dentro da
+/// batalha (rodadas 2, 4, 6, 8 — a rodada final não oferta).
+pub const TACTIC_INTERVAL: usize = 2;
 /// Teto de fluxo por unidade.
 pub const FLUXO_CAP: i32 = 100;
 /// Fluxo ganho no início de cada rodada.
@@ -103,6 +107,9 @@ pub enum PromptPhase {
     ChooseAction,
     /// Janela de perseguição aberta: confirmar perseguidor ou recusar.
     ConfirmChase,
+    /// R1 (feedback): oferta de tática de batalha a cada 2 rodadas —
+    /// escolher 1 das 2 cartas ofertadas ([`ChosenAction::PickTactic`]).
+    ChooseTactic,
     /// Batalha concluída ([`InteractiveBattle::outcome`] preenchido).
     Over,
 }
@@ -176,6 +183,9 @@ pub enum ChosenAction {
     Chase { chaser_slot: usize },
     /// Recusa a janela de perseguição (tática válida).
     RejectChase,
+    /// Adota 1 das 2 táticas ofertadas (fase [`PromptPhase::ChooseTactic`];
+    /// índice 0/1 DENTRO da oferta, não no pool).
+    PickTactic { index: usize },
 }
 
 /// Erro de execução — a UI deve prevenir, a engine nunca trava em silêncio.
@@ -256,6 +266,9 @@ pub enum BattleEvent {
     ChaseResolved { chaser: (usize, usize), target: (usize, usize), amount: i32, killed: bool },
     /// Janela recusada.
     ChaseRejected { side: usize },
+    /// R1 (feedback): tática de batalha adotada. O log do cliente exibe só
+    /// a do jogador (lado 0) — a do inimigo é silenciosa por design.
+    TacticPicked { side: usize, tactic: String },
     /// Fechamento de rodada (curas de passiva já emitidas como [`BattleEvent::Heal`]).
     RoundEnd { round: usize },
     /// Batalha concluída.
@@ -517,6 +530,11 @@ pub struct InteractiveBattle {
     chase_queue: Vec<(usize, usize, ComboState)>,
     /// Lado dono da janela de chase corrente.
     chase_side: usize,
+    /// R1: oferta corrente de táticas (2 índices no pool) — `Some` abre a
+    /// fase [`PromptPhase::ChooseTactic`] para o jogador (lado 0).
+    tactic_offer: Option<[usize; 2]>,
+    /// Tática que o inimigo adotou em silêncio (índice no pool).
+    enemy_tactic: Option<usize>,
     chain_links: u64,
     /// Elos de cadeia na rodada corrente (bônus do Eco de Combate).
     chain_links_round: u64,
@@ -588,6 +606,8 @@ impl InteractiveBattle {
             chain_links: 0,
             chain_links_round: 0,
             revive_used: [false; 2],
+            tactic_offer: None,
+            enemy_tactic: None,
             unmodeled,
             decision_gen: 0,
         }
@@ -752,6 +772,12 @@ impl InteractiveBattle {
                 if self.over {
                     return TurnPrompt { side: 0, slot: 0, round: self.round, phase: PromptPhase::Over };
                 }
+            }
+            if let Some(_oferta) = self.tactic_offer {
+                // R1: escolha de tática pendente — pausa o jogador ANTES da
+                // rodada correr (o inimigo já adotou a dele em silêncio).
+                let slot = self.current_entry().map(|(_, k)| k).unwrap_or(0);
+                return TurnPrompt { side: 0, slot, round: self.round, phase: PromptPhase::ChooseTactic };
             }
             if !self.chase_queue.is_empty() {
                 if self.chase_eligible().is_empty() {
@@ -951,6 +977,54 @@ impl InteractiveBattle {
         self.chase_eligible()
     }
 
+    /// Oferta corrente de táticas (2 índices no [`crate::rewards::TACTIC_POOL`])
+    /// — `None` fora da janela de escolha (fase [`PromptPhase::ChooseTactic`]).
+    pub fn tactic_offer(&self) -> Option<[usize; 2]> {
+        self.tactic_offer
+    }
+
+    /// Índice no pool da tática que o inimigo adotou em silêncio (`None`
+    /// até a primeira oferta). Diagnóstico/testes — a UI NÃO exibe
+    /// (feedback R1 pediu decisão oculta do adversário).
+    pub fn enemy_tactic_pick(&self) -> Option<usize> {
+        self.enemy_tactic
+    }
+
+    /// Adota uma tática de batalha (R1 do feedback): efeito de escopo da
+    /// batalha aplicado na hora; emite [`BattleEvent::TacticPicked`].
+    fn apply_tactic(&mut self, side: usize, idx_pool: usize) {
+        let pool = &crate::rewards::TACTIC_POOL;
+        let c = &pool[idx_pool.min(pool.len() - 1)];
+        match c.id {
+            "t-ataque" => {
+                for u in &mut self.sides[side].units {
+                    if u.alive {
+                        u.atk = u.atk * (PER_MILLE + c.team_atk) / PER_MILLE;
+                    }
+                }
+            }
+            "t-pele" => {
+                for u in &mut self.sides[side].units {
+                    if u.alive {
+                        u.dmg_reduction_permille = (u.dmg_reduction_permille + c.team_dmg_reduction).min(300);
+                    }
+                }
+            }
+            "t-fluxo" => {
+                self.edges[side].fluxo_per_round += c.fluxo_per_round;
+            }
+            "t-cura" => {
+                for u in &mut self.sides[side].units {
+                    if u.alive {
+                        u.round_end_heal_pct += c.round_end_heal_pct;
+                    }
+                }
+            }
+            _ => {}
+        }
+        self.outbox.push(BattleEvent::TacticPicked { side, tactic: c.name.to_string() });
+    }
+
     /// Slots inimigos que ainda vão agiar nesta rodada (janela de interrupt).
     pub fn interrupt_targets(&self, side: usize) -> Vec<usize> {
         let enemy = 1 - side;
@@ -1144,8 +1218,22 @@ impl InteractiveBattle {
             match action {
                 ChosenAction::Chase { chaser_slot } => self.run_chase(side, chaser_slot)?,
                 ChosenAction::RejectChase => self.reject_chase(side),
-                ChosenAction::Act { .. } => return Err(ActionError::WrongPhase),
+                ChosenAction::Act { .. } | ChosenAction::PickTactic { .. } => {
+                    return Err(ActionError::WrongPhase)
+                }
             }
+            self.decision_gen += 1;
+            return Ok(std::mem::take(&mut self.outbox));
+        }
+        if let Some(oferta) = self.tactic_offer {
+            let ChosenAction::PickTactic { index } = action else {
+                return Err(ActionError::WrongPhase);
+            };
+            if index >= oferta.len() {
+                return Err(ActionError::IllegalAction);
+            }
+            self.apply_tactic(0, oferta[index]);
+            self.tactic_offer = None;
             self.decision_gen += 1;
             return Ok(std::mem::take(&mut self.outbox));
         }
@@ -1300,6 +1388,23 @@ impl InteractiveBattle {
         self.finish_if_defeated();
         if self.over {
             return;
+        }
+
+        // R1 (feedback 2026-10-18): a cada 2 rodadas (2, 4, 6, 8) abre
+        // oferta de tática para o jogador; o inimigo adota a dele EM
+        // SILÊNCIO — simetria de poder, zero UI. Efeito de escopo da
+        // batalha: não entra no teto de poder da run.
+        if self.round.is_multiple_of(TACTIC_INTERVAL) && self.round + TACTIC_INTERVAL <= MAX_ROUNDS {
+            let pool = crate::rewards::TACTIC_POOL.len();
+            let a = self.rng.range(pool);
+            let mut b = self.rng.range(pool - 1);
+            if b >= a {
+                b += 1;
+            }
+            let inimigo = self.rng.range(pool);
+            self.enemy_tactic = Some(inimigo);
+            self.apply_tactic(1, inimigo);
+            self.tactic_offer = Some([a, b]);
         }
 
         // Timeline: SPD desc dentro do lado, intercalada A1→B1→A2→B2…
@@ -1876,6 +1981,11 @@ impl InteractiveBattle {
 /// cura com aliado ferido > mystery > skill de dano > padrão. Desempate pelo
 /// maior número previsto (dano×2; cura×2 quando alguém está <45% de HP).
 pub fn greedy_decide(bt: &InteractiveBattle, p: &TurnPrompt) -> ChosenAction {
+    if p.phase == PromptPhase::ChooseTactic {
+        // Determinístico e sem favoritismo: alterna pela geração de decisão
+        // (a oferta já é sorteada pela seed; a escolha espelha o inimigo).
+        return ChosenAction::PickTactic { index: (bt.generation() % 2) as usize };
+    }
     if p.phase == PromptPhase::ConfirmChase {
         return match bt.chase_eligible_slots(p.side).first() {
             Some(&s) => ChosenAction::Chase { chaser_slot: s },
@@ -2028,6 +2138,10 @@ mod tests {
                 evs.extend(bt.drain());
                 if p.phase == PromptPhase::Over {
                     break;
+                }
+                if p.phase == PromptPhase::ChooseTactic {
+                    evs.append(&mut bt.execute_action(ChosenAction::PickTactic { index: 0 }).expect("tática legal"));
+                    continue;
                 }
                 evs.append(&mut bt.execute_action(acao_padrao(&bt, &p, 0)).expect("ok"));
             }
@@ -2185,7 +2299,9 @@ mod tests {
         // Confirmado: mystery do striker aplica launch → perseguidor slot 1 dá dano
         let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 0);
         bt.sides[0].units[0].fluxo = 100;
-        bt.round = 3; // striker destrava a mystery na R3
+        // round=2 ⇒ a abertura preguiçosa (dentro de forcar_vez) entra na R3
+        // (ímpar, sem oferta de tática) — striker destrava a mystery na R3
+        bt.round = 2;
         forcar_vez(&mut bt, 0, 0);
         let _ = bt.execute_action(ChosenAction::Act { kind: ActionKind::Mystery, target: None }).expect("mystery");
         let p = bt.prompt();
@@ -2200,7 +2316,8 @@ mod tests {
         // Rejeitado: nenhuma perseguição acontece
         let mut bt2 = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 0);
         bt2.sides[0].units[0].fluxo = 100;
-        bt2.round = 3;
+        // round=2 ⇒ abertura preguiçosa entra na R3 (sem oferta de tática)
+        bt2.round = 2;
         forcar_vez(&mut bt2, 0, 0);
         let _ = bt2.execute_action(ChosenAction::Act { kind: ActionKind::Mystery, target: None }).expect("mystery");
         let p = bt2.prompt();
@@ -2219,6 +2336,10 @@ mod tests {
                 ev.iter().all(|e| !matches!(e, BattleEvent::ChaseResolved { .. })),
                 "recusa proíbe elos de chase"
             );
+            if p.phase == PromptPhase::ChooseTactic {
+                let _ = bt2.execute_action(ChosenAction::PickTactic { index: 0 });
+                continue;
+            }
             let _ = bt2.execute_action(acao_padrao(&bt2, &p, 0)).expect("ok");
         }
         assert_eq!(bt2.chain_links(), 0, "nenhum elo após recusa");
@@ -2229,7 +2350,8 @@ mod tests {
         let r = test_roster();
         let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 0);
         bt.sides[0].units[0].fluxo = 100;
-        bt.round = 3;
+        // round=2 ⇒ abertura preguiçosa entra na R3 (sem oferta de tática)
+        bt.round = 2;
         forcar_vez(&mut bt, 0, 0);
         let _ = bt.execute_action(ChosenAction::Act { kind: ActionKind::Mystery, target: None }).expect("mystery");
         let p = bt.prompt();
@@ -2275,6 +2397,10 @@ mod tests {
             viu_skip |= evs.iter().any(|e| matches!(e, BattleEvent::Skip { side: 1, slot: 0, reason: SkipReason::Stunned }));
             if p.phase == PromptPhase::Over || viu_skip {
                 break;
+            }
+            if p.phase == PromptPhase::ChooseTactic {
+                let _ = bt.execute_action(ChosenAction::PickTactic { index: 0 });
+                continue;
             }
             let _ = bt.execute_action(acao_padrao(&bt, &p, 0));
         }
@@ -2330,6 +2456,10 @@ mod tests {
             let _ = bt.drain();
             if p.phase == PromptPhase::Over {
                 break;
+            }
+            if p.phase == PromptPhase::ChooseTactic {
+                let _ = bt.execute_action(ChosenAction::PickTactic { index: 0 });
+                continue;
             }
             let acao = if p.phase == PromptPhase::ConfirmChase {
                 ChosenAction::RejectChase
@@ -2390,6 +2520,10 @@ mod tests {
             let _ = bt.drain();
             if p.phase == PromptPhase::Over {
                 break;
+            }
+            if p.phase == PromptPhase::ChooseTactic {
+                let _ = bt.execute_action(ChosenAction::PickTactic { index: 0 });
+                continue;
             }
             let acao = if p.phase == PromptPhase::ConfirmChase {
                 ChosenAction::RejectChase
@@ -2516,7 +2650,8 @@ mod tests {
         let r = test_roster();
         let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 0);
         bt.sides[0].units[0].fluxo = 100;
-        bt.round = 3;
+        // round=2 ⇒ abertura preguiçosa entra na R3 (sem oferta de tática)
+        bt.round = 2;
         forcar_vez(&mut bt, 0, 0);
         let prev = bt
             .preview_action(0, 0, ChosenAction::Act { kind: ActionKind::Mystery, target: None })
@@ -2575,7 +2710,8 @@ mod tests {
         let r = test_roster();
         let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 0);
         bt.sides[0].units[0].fluxo = 100;
-        bt.round = 3;
+        // round=2 ⇒ abertura preguiçosa entra na R3 (sem oferta de tática)
+        bt.round = 2;
         forcar_vez(&mut bt, 0, 0);
         let _ = bt.execute_action(ChosenAction::Act { kind: ActionKind::Mystery, target: None }).expect("mystery");
         let p = bt.prompt();
@@ -2796,5 +2932,84 @@ mod tests {
             let _ = bt.execute_action(ChosenAction::Act { kind: ActionKind::Standard, target: None });
             assert_eq!(bt.generation(), g1 + 1, "decisão consumida incrementa a geração");
         }
+    }
+
+    /// R1 (feedback 2026-10-18): a cada 2 rodadas abre oferta de tática
+    /// (rodadas 2, 4, 6, 8); o inimigo adota a dele em silêncio.
+    #[test]
+    fn tatica_ofertada_a_cada_2_rodadas() {
+        let r = roster();
+        let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 21);
+        let mut rodadas_com_oferta = Vec::new();
+        let mut inimigo_sorteou = 0;
+        let mut guard = 0;
+        loop {
+            guard += 1;
+            assert!(guard < 50_000, "não converge com táticas");
+            let p = bt.prompt();
+            let _ = bt.drain();
+            match p.phase {
+                PromptPhase::Over => break,
+                PromptPhase::ChooseTactic => {
+                    rodadas_com_oferta.push(bt.round());
+                    assert!(bt.enemy_tactic_pick().is_some(), "inimigo já sorteou a tática dele");
+                    inimigo_sorteou += 1;
+                    let _ = bt.execute_action(ChosenAction::PickTactic { index: 0 });
+                }
+                _ => {
+                    let _ = bt.execute_action(greedy_decide(&bt, &p));
+                }
+            }
+        }
+        assert_eq!(rodadas_com_oferta.first(), Some(&2), "primeira oferta na rodada 2");
+        assert_eq!(inimigo_sorteou, rodadas_com_oferta.len(), "cada oferta tem equivalente silencioso");
+        assert!(
+            rodadas_com_oferta.iter().all(|&r| r % TACTIC_INTERVAL == 0 && r < MAX_ROUNDS),
+            "ofertas só em rodadas pares pré-finais: {rodadas_com_oferta:?}"
+        );
+    }
+
+    /// R1: adotar tática muda o estado do time (efeito real, escopo da
+    /// batalha) e emite evento nomeado.
+    #[test]
+    fn tatica_aplica_efeito_e_emite_evento() {
+        let r = roster();
+        let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 21);
+        // avança até a 1ª janela de tática (rodada 2)
+        loop {
+            let p = bt.prompt();
+            let _ = bt.drain();
+            match p.phase {
+                PromptPhase::Over => panic!("batalha terminou antes da rodada 2"),
+                PromptPhase::ChooseTactic => break,
+                _ => {
+                    let _ = bt.execute_action(greedy_decide(&bt, &p));
+                }
+            }
+        }
+        // retrato antes: ATK/mitigação/fluxo/cura de fim de rodada do lado 0
+        let antes = (
+            bt.sides[0].units.iter().map(|u| u.atk).sum::<i32>(),
+            bt.sides[0].units.iter().map(|u| u.dmg_reduction_permille).sum::<i32>(),
+            bt.edges[0].fluxo_per_round,
+            bt.sides[0].units.iter().map(|u| u.round_end_heal_pct).sum::<i32>(),
+        );
+        let eventos = bt.execute_action(ChosenAction::PickTactic { index: 0 }).expect("tática legal");
+        let depois = (
+            bt.sides[0].units.iter().map(|u| u.atk).sum::<i32>(),
+            bt.sides[0].units.iter().map(|u| u.dmg_reduction_permille).sum::<i32>(),
+            bt.edges[0].fluxo_per_round,
+            bt.sides[0].units.iter().map(|u| u.round_end_heal_pct).sum::<i32>(),
+        );
+        assert_ne!(antes, depois, "adotar tática muda o estado do time");
+        assert!(
+            eventos
+                .iter()
+                .any(|e| matches!(e, BattleEvent::TacticPicked { side: 0, .. })),
+            "evento TacticPicked do jogador emitido"
+        );
+        // oferta encerrada — volta a pedir ação normal
+        assert!(bt.tactic_offer().is_none());
+        assert_ne!(bt.prompt().phase, PromptPhase::ChooseTactic);
     }
 }

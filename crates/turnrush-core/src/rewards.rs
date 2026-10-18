@@ -91,6 +91,10 @@ pub struct RewardCard {
     /// Bônus de unidade: ATK/HP per-mille (cartas de unidade).
     pub unit_atk: i32,
     pub unit_hp: i32,
+    /// Mitigação de dano do time (per-mille; tática Pele de Pedra).
+    pub team_dmg_reduction: i32,
+    /// Cura de fim de rodada do time (% HP máx; tática Cura de Campo).
+    pub round_end_heal_pct: i32,
 }
 
 const fn card(id: &'static str, name: &'static str, desc: &'static str, class: CardClass, rarity: Rarity, poder: i32, pref: Option<Faction>) -> RewardCard {
@@ -112,8 +116,55 @@ const fn card(id: &'static str, name: &'static str, desc: &'static str, class: C
         unlock_early: 0,
         unit_atk: 0,
         unit_hp: 0,
+        team_dmg_reduction: 0,
+        round_end_heal_pct: 0,
     }
 }
+
+/// Carta de tática de BATALHA (R1 do feedback 2026-10-18): oferta a cada
+/// 2 rodadas DENTRO da batalha; efeito dura só até o fim da batalha
+/// corrente — não entra no teto de poder da run ([`PODER_CAP`]). O inimigo
+/// adota a dele em silêncio (simetria de poder, zero UI).
+const fn tactic(
+    id: &'static str,
+    name: &'static str,
+    desc: &'static str,
+    team_atk: i32,
+    team_dmg_reduction: i32,
+    fluxo_per_round: i32,
+    round_end_heal_pct: i32,
+) -> RewardCard {
+    RewardCard {
+        id,
+        name,
+        desc,
+        class: CardClass::Tactic,
+        rarity: Rarity::Common,
+        poder: 0,
+        faction_pref: None,
+        team_atk,
+        team_hp: 0,
+        team_dmg_reduction,
+        fluxo_per_round,
+        chain_per_link: 0,
+        chain_cap: 0,
+        extra_chases: 0,
+        revive_pct: 0,
+        unlock_early: 0,
+        unit_atk: 0,
+        unit_hp: 0,
+        round_end_heal_pct,
+    }
+}
+
+/// Pool de táticas de batalha (oferta: 2 distintas por janela; efeito de
+/// escopo da batalha, orçamento pequeno por design — ver docs/CARTAS).
+pub const TACTIC_POOL: [RewardCard; 4] = [
+    tactic("t-ataque", "Reforço de Linha", "+12% de ATK do time nesta batalha", 120, 0, 0, 0),
+    tactic("t-pele", "Pele de Pedra", "dano recebido pelo time -8% nesta batalha", 0, 80, 0, 0),
+    tactic("t-fluxo", "Fluxo Acelerado", "+4 de fluxo por rodada nesta batalha", 0, 0, 4, 0),
+    tactic("t-cura", "Cura de Campo", "o mais ferido do time cura 3% do HP máx no fim da rodada", 0, 0, 0, 30),
+];
 
 /// Pool de lançamento (v0.7): 12 cartas — 4 por classe.
 pub const CARD_POOL: [RewardCard; 12] = [
@@ -372,6 +423,10 @@ mod tests {
     /// jogador; contrato de simetria do E.9).
     fn decidir(bt: &mut crate::interactive::InteractiveBattle, p: &crate::interactive::TurnPrompt) -> crate::interactive::ChosenAction {
         use crate::interactive::{ActionKind, ChosenAction, PromptPhase};
+        if p.phase == PromptPhase::ChooseTactic {
+            // oferta de tática (R1): escolha determinística simples
+            return ChosenAction::PickTactic { index: 0 };
+        }
         if p.phase == PromptPhase::ConfirmChase {
             // confirma o primeiro elegível; sem elegível, recusa
             return match bt.chase_eligible_slots(p.side).first() {
