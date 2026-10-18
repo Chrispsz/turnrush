@@ -225,8 +225,8 @@ pub struct Formation4v4 {
     pending: Option<PendingDecision>,
 }
 
-/// Primeiro `N%` após a palavra-chave.
-fn pct_after(text: &str, keyword: &str) -> Option<i32> {
+/// Primeiro `N%` após a palavra-chave (compartilhado com `interactive.rs`).
+pub(crate) fn pct_after(text: &str, keyword: &str) -> Option<i32> {
     let idx = text.find(keyword)?;
     let rest = &text[idx + keyword.len()..];
     let b = rest.as_bytes();
@@ -247,8 +247,8 @@ fn pct_after(text: &str, keyword: &str) -> Option<i32> {
     None
 }
 
-/// Primeiro `+N` após a palavra-chave.
-fn plus_after(text: &str, keyword: &str) -> Option<i32> {
+/// Primeiro `+N` após a palavra-chave (compartilhado com `interactive.rs`).
+pub(crate) fn plus_after(text: &str, keyword: &str) -> Option<i32> {
     let idx = text.find(keyword)?;
     let rest = &text[idx..];
     let b = rest.as_bytes();

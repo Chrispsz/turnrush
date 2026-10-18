@@ -389,6 +389,42 @@ pub struct PassiveDef {
     pub effect: String,
 }
 
+/// Tipo de interrupção (v0.7): o efeito aplicado ao alvo do interrupt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InterruptKind {
+    /// O alvo perde a próxima ação (1 rodada).
+    Stun,
+    /// O alvo não pode usar Skill/Mystery na próxima ação (1 rodada).
+    Silence,
+}
+
+impl InterruptKind {
+    pub fn parse(s: &str) -> Result<InterruptKind, String> {
+        match s {
+            "stun" => Ok(InterruptKind::Stun),
+            "silence" => Ok(InterruptKind::Silence),
+            other => Err(format!("interrupt.kind inválido: '{other}' (use stun|silence)")),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InterruptKind::Stun => "stun",
+            InterruptKind::Silence => "silence",
+        }
+    }
+}
+
+/// Interrupt (v0.7): reação defensiva usada **antes** de o alvo agir na
+/// rodada corrente. Custa fluxo fixo e tem cooldown próprio (constants em
+/// `interactive.rs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InterruptDef {
+    pub kind: InterruptKind,
+    /// Janela em rodadas (1 = apenas antes de o alvo agir na rodada corrente).
+    pub window: u32,
+}
+
 /// Personagem do contrato v2.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RosterChar {
@@ -404,6 +440,21 @@ pub struct RosterChar {
     pub standard: StandardDef,
     pub chase: ChaseDef,
     pub passive: PassiveDef,
+    /// Rodada em que a Mystery destrava no modo interativo (v0.7).
+    /// Default por papel: striker 3, demais 2 (ver `default_unlock_round`).
+    pub mystery_unlock_round: usize,
+    /// Interrupt opcional (v0.7). `None` = sem interrupt (default).
+    pub interrupt: Option<InterruptDef>,
+}
+
+impl RosterChar {
+    /// Rodada de desbloqueio da Mystery quando o JSON não define uma.
+    pub fn default_unlock_round(role: Role) -> usize {
+        match role {
+            Role::Striker => 3,
+            _ => 2,
+        }
+    }
 }
 
 /// Roster carregado do contrato JSON v2.
@@ -572,6 +623,35 @@ fn parse_char(i: usize, j: &crate::json::Json) -> Result<RosterChar, String> {
     }
     let passive = PassiveDef { name: req_str(p, "name", &pctx)?, effect: req_str(p, "effect", &pctx)? };
 
+    // v0.7 — campos opcionais com defaults (migração: rosters antigos valem).
+    // `mystery_unlock_round` ausente → default por papel (striker 3, demais 2).
+    // `interrupt` ausente → None (personagem sem interrupção).
+    let mystery_unlock_round = match j.get("unlock_schedule").and_then(|u| u.get("mystery_round")) {
+        Some(v) => match v.as_int() {
+            Some(n) if (1..=10).contains(&n) => n as usize,
+            _ => return Err(format!("roster: '{ctx}.unlock_schedule.mystery_round' deve ser inteiro 1..10")),
+        },
+        None => RosterChar::default_unlock_round(role),
+    };
+    let interrupt = match j.get("interrupt") {
+        None => None,
+        Some(o) => {
+            let ictx = format!("{ctx}.interrupt");
+            if o.as_obj().is_none() {
+                return Err(format!("roster: '{ictx}' deve ser um objeto"));
+            }
+            let kind = req_enum(o, "kind", &ictx, InterruptKind::parse)?;
+            let window = match o.get("window") {
+                Some(v) => match v.as_int() {
+                    Some(n) if (1..=3).contains(&n) => n as u32,
+                    _ => return Err(format!("roster: '{ictx}.window' deve ser inteiro 1..3")),
+                },
+                None => 1,
+            };
+            Some(InterruptDef { kind, window })
+        }
+    };
+
     Ok(RosterChar {
         id,
         name,
@@ -585,6 +665,8 @@ fn parse_char(i: usize, j: &crate::json::Json) -> Result<RosterChar, String> {
         standard,
         chase,
         passive,
+        mystery_unlock_round,
+        interrupt,
     })
 }
 

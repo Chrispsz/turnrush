@@ -17,6 +17,7 @@ pub mod cards;
 pub mod combat;
 pub mod data;
 pub mod formation;
+pub mod interactive;
 pub mod json;
 pub mod logger;
 pub mod rng;
