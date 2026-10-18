@@ -1840,6 +1840,72 @@ impl InteractiveBattle {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// IA simétrica (E.9): decide com a MESMA informação do jogador — legal_actions
+// + preview_action + chase_eligible_slots, zero leitura de estado interno.
+// Auditoria: se esta função referencia algo além da API pública, o contrato
+// de simetria quebra.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// IA greedy simétrica. Prioridade: chase elegível > interrupt de janela >
+/// cura com aliado ferido > mystery > skill de dano > padrão. Desempate pelo
+/// maior número previsto (dano×2; cura×2 quando alguém está <45% de HP).
+pub fn greedy_decide(bt: &InteractiveBattle, p: &TurnPrompt) -> ChosenAction {
+    if p.phase == PromptPhase::ConfirmChase {
+        return match bt.chase_eligible_slots(p.side).first() {
+            Some(&s) => ChosenAction::Chase { chaser_slot: s },
+            None => ChosenAction::RejectChase,
+        };
+    }
+    let legais = bt.legal_actions(p.side, p.slot);
+    let mut melhor: Option<(i64, ChosenAction)> = None;
+    for l in &legais {
+        let alvo = match l.kind {
+            ActionKind::Standard => melhor_alvo_inimigo(bt, p),
+            ActionKind::Interrupt => bt.interrupt_targets(p.side).first().copied(),
+            _ => None,
+        };
+        let acao = ChosenAction::Act { kind: l.kind, target: alvo };
+        let Ok(prev) = bt.preview_action(p.side, p.slot, acao) else {
+            continue;
+        };
+        let valor = if prev.heal > 0 {
+            let ferido = (0..4).any(|k| {
+                bt.unit(p.side, k).alive && bt.unit(p.side, k).hp * 100 < bt.unit(p.side, k).hp_max * 45
+            });
+            if ferido {
+                prev.heal as i64 * 2 + peso(l.kind)
+            } else {
+                peso(l.kind) / 4
+            }
+        } else {
+            prev.damage as i64 * 2 + peso(l.kind)
+        };
+        if melhor.as_ref().map(|(v, _)| valor > *v).unwrap_or(true) {
+            melhor = Some((valor, acao));
+        }
+    }
+    melhor.map(|(_, a)| a).unwrap_or(ChosenAction::Act { kind: ActionKind::Standard, target: None })
+}
+
+/// Peso de prioridade da IA por tipo de ação (tie-break macro).
+const fn peso(kind: ActionKind) -> i64 {
+    match kind {
+        ActionKind::Standard => 0,
+        ActionKind::Skill => 4,
+        ActionKind::Mystery => 8,
+        ActionKind::Interrupt => 12,
+    }
+}
+
+/// Alvo padrão da IA: inimigo vivo com menos HP (fogo concentrado).
+fn melhor_alvo_inimigo(bt: &InteractiveBattle, p: &TurnPrompt) -> Option<usize> {
+    let enemy = 1 - p.side;
+    (0..4)
+        .filter(|&k| bt.unit(enemy, k).alive)
+        .min_by_key(|&k| bt.unit(enemy, k).hp)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Testes
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2551,6 +2617,85 @@ mod tests {
             }
         }
         assert_eq!(hp_antes, hp_depois, "prévia não muta HP");
+    }
+
+    // ── E.9: contrato de simetria da IA ──────────────────────────────────────
+
+    /// Batalha IA vs IA via APENAS a API pública — deve concluir sempre.
+    #[test]
+    fn ia_simetrica_conclui_por_api_publica() {
+        let r = roster();
+        for seed in [1u64, 2, 3, 4, 5] {
+            let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], seed);
+            let mut guard = 0;
+            loop {
+                guard += 1;
+                assert!(guard < 50_000, "IA não converge (seed {seed})");
+                let p = bt.prompt();
+                let _ = bt.drain();
+                if p.phase == PromptPhase::Over {
+                    break;
+                }
+                let acao = greedy_decide(&bt, &p);
+                // a submissão DEVE ser aceita (IA só usa ações legais)
+                if let Err(e) = bt.execute_action(acao) {
+                    panic!("IA submeteu ação ilegal (seed {seed}): {acao:?} → {e:?}");
+                }
+            }
+            assert!(bt.outcome().is_some());
+        }
+    }
+
+    /// Espelho com IA dos dois lados: nenhum lado domina (janela 25-75%).
+    #[test]
+    fn ia_espelho_nao_domina() {
+        let r = roster();
+        let mut a = 0;
+        let n = 101;
+        for seed in 0..n as u64 {
+            let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [0, 1, 2, 3], seed);
+            loop {
+                let p = bt.prompt();
+                let _ = bt.drain();
+                if p.phase == PromptPhase::Over {
+                    break;
+                }
+                let _ = bt.execute_action(greedy_decide(&bt, &p));
+            }
+            if bt.outcome() == Some(Outcome::TeamAWin) {
+                a += 1;
+            }
+        }
+        let wr = a as f64 / n as f64;
+        assert!(
+            (0.25..=0.75).contains(&wr),
+            "espelho com IA deve ficar perto de 50% (A={wr:.2} em {n})"
+        );
+    }
+
+    /// IA determinística: mesma seed ⇒ mesma sequência de decisões.
+    #[test]
+    fn ia_deterministica() {
+        let r = roster();
+        let roda = |seed: u64| {
+            let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 0], [3, 4, 5, 3], seed);
+            let mut decisoes: Vec<(usize, usize, String)> = Vec::new();
+            loop {
+                let p = bt.prompt();
+                let _ = bt.drain();
+                if p.phase == PromptPhase::Over {
+                    break;
+                }
+                let acao = greedy_decide(&bt, &p);
+                decisoes.push((p.side, p.slot, format!("{acao:?}")));
+                let _ = bt.execute_action(acao);
+            }
+            (bt.outcome(), decisoes)
+        };
+        let (o1, d1) = roda(77);
+        let (o2, d2) = roda(77);
+        assert_eq!(o1, o2);
+        assert_eq!(d1, d2, "mesma seed ⇒ mesmas decisões da IA");
     }
 
     #[test]

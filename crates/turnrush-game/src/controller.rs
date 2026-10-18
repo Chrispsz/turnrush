@@ -203,70 +203,11 @@ impl BattleController {
     }
 }
 
-/// IA greedy simétrica: decide com a MESMA informação do jogador
-/// (legal_actions + preview_action), zero leitura de estado interno.
-///
-/// Prioridade: chase elegível, depois interrupt de janela, cura com aliado
-/// ferido, mystery, skill de dano e padrão. Empates: maior número previsto.
+/// IA greedy: a versão canônica vive no core (simetria auditável).
 pub fn greedy_decide(bt: &InteractiveBattle, p: &TurnPrompt) -> ChosenAction {
-    use std::cmp::Ordering;
-    if p.phase == PromptPhase::ConfirmChase {
-        return match bt.chase_eligible_slots(p.side).first() {
-            Some(&s) => ChosenAction::Chase { chaser_slot: s },
-            None => ChosenAction::RejectChase,
-        };
-    }
-    let legais = bt.legal_actions(p.side, p.slot);
-    let mut melhor: Option<(i64, ChosenAction)> = None;
-    let mut avaliar = |acao: ChosenAction, peso: i64, bt: &InteractiveBattle| {
-        if let Ok(prev) = bt.preview_action(p.side, p.slot, acao) {
-            let valor = if prev.heal > 0 {
-                let ferido = (0..4).any(|k| {
-                    bt.unit(p.side, k).alive
-                        && bt.unit(p.side, k).hp * 100 < bt.unit(p.side, k).hp_max * 45
-                });
-                if ferido {
-                    prev.heal as i64 * 2 + peso
-                } else {
-                    peso / 4
-                }
-            } else {
-                prev.damage as i64 * 2 + peso
-            };
-            if melhor.as_ref().map(|(v, _)| valor > *v).unwrap_or(true) {
-                melhor = Some((valor, acao));
-            }
-        }
-    };
-    for l in &legais {
-        match l.kind {
-            ActionKind::Standard => avaliar(ChosenAction::Act { kind: l.kind, target: melhor_alvo_inimigo(bt, p) }, 0, bt),
-            ActionKind::Skill => avaliar(ChosenAction::Act { kind: l.kind, target: None }, 4, bt),
-            ActionKind::Mystery => avaliar(ChosenAction::Act { kind: l.kind, target: None }, 8, bt),
-            ActionKind::Interrupt => {
-                // interrompe o inimigo de maior ameaça que ainda vai agir
-                let alvos = bt.interrupt_targets(p.side);
-                let alvo = alvos.first().copied();
-                avaliar(ChosenAction::Act { kind: l.kind, target: alvo }, 12, bt);
-            }
-        }
-    }
-    if melhor.is_none() {
-        return ChosenAction::Act { kind: ActionKind::Standard, target: None };
-    }
-    // desempate estável: maior dano previsto
-    melhor.map(|(_, a)| a).unwrap_or_else(|| ChosenAction::Act { kind: ActionKind::Standard, target: None });
-    let _ = Ordering::Greater;
-    melhor.expect("verificado acima").1
+    turnrush_core::interactive::greedy_decide(bt, p)
 }
 
-/// Alvo padrão: inimigo vivo com menor HP (execução de focused fire da IA).
-fn melhor_alvo_inimigo(bt: &InteractiveBattle, p: &TurnPrompt) -> Option<usize> {
-    let enemy = 1 - p.side;
-    (0..4)
-        .filter(|&k| bt.unit(enemy, k).alive)
-        .min_by_key(|&k| bt.unit(enemy, k).hp)
-}
 
 #[cfg(test)]
 mod tests {
