@@ -20,6 +20,7 @@ pub mod formation;
 pub mod interactive;
 pub mod json;
 pub mod logger;
+pub mod rewards;
 pub mod rng;
 pub mod run;
 pub mod types;

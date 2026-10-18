@@ -240,6 +240,8 @@ pub enum BattleEvent {
     Damage { side: usize, slot: usize, amount: i32, killed: bool },
     /// Cura (habilidade ou passiva de fim de rodada).
     Heal { side: usize, slot: usize, amount: i32 },
+    /// Unidade reviveu (Último Suspiro) com `amount` de HP.
+    Revive { side: usize, slot: usize, amount: i32 },
     /// Escudo concedido.
     Shield { side: usize, slot: usize, amount: i32 },
     /// Estado de combo aplicado (abre janela de chase).
@@ -366,6 +368,55 @@ impl Tier {
     }
 }
 
+/// Vantagem de um lado na batalha: escala (escalada inimiga/boss) + bônus
+/// acumulados de cartas da run. Tudo inteiro/per-mille — default = neutro.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SideEdge {
+    /// Escala de dano base (1000 = 100%). Usada pela escalada de inimigos.
+    pub dmg_scale_permille: i32,
+    /// Escala de vida base (1000 = 100%).
+    pub hp_scale_permille: i32,
+    /// Bônus de ATK de cartas (per-mille somado).
+    pub atk_bonus_permille: i32,
+    /// Bônus de HP de cartas (per-mille somado; pode ser negativo).
+    pub hp_bonus_permille: i32,
+    /// Fluxo extra por rodada (carta Fluxo Estável etc.).
+    pub fluxo_per_round: i32,
+    /// Dano de chase por elo de cadeia na rodada (per-mille; Eco de Combate).
+    pub chain_dmg_per_link: i32,
+    /// Teto do bônus de cadeia (per-mille).
+    pub chain_dmg_cap: i32,
+    /// Chases extras por unidade por rodada (Ambidestria = 1).
+    pub extra_chases: u32,
+    /// % de HP de revival da 1ª morte do time (Último Suspiro; 0 = sem).
+    pub revive_pct: i32,
+    /// Rodadas de antecipação da Mystery (Gatilho Rápido).
+    pub unlock_early: usize,
+    /// Bônus de ATK por slot (cartas de unidade).
+    pub unit_atk: [i32; 4],
+    /// Bônus de HP por slot (cartas de unidade).
+    pub unit_hp: [i32; 4],
+}
+
+impl Default for SideEdge {
+    fn default() -> Self {
+        SideEdge {
+            dmg_scale_permille: PER_MILLE,
+            hp_scale_permille: PER_MILLE,
+            atk_bonus_permille: 0,
+            hp_bonus_permille: 0,
+            fluxo_per_round: 0,
+            chain_dmg_per_link: 0,
+            chain_dmg_cap: 0,
+            extra_chases: 0,
+            revive_pct: 0,
+            unlock_early: 0,
+            unit_atk: [0; 4],
+            unit_hp: [0; 4],
+        }
+    }
+}
+
 /// Unidade do modo interativo.
 struct IU {
     name: String,
@@ -394,6 +445,7 @@ struct IU {
     chase_dmg_bonus_permille: i32,
     chase_fluxo_bonus: i32,
     chased: bool,
+    chase_used: u32,
     acted: bool,
     alive: bool,
     standard: StandardDef,
@@ -466,6 +518,12 @@ pub struct InteractiveBattle {
     /// Lado dono da janela de chase corrente.
     chase_side: usize,
     chain_links: u64,
+    /// Elos de cadeia na rodada corrente (bônus do Eco de Combate).
+    chain_links_round: u64,
+    /// Revival da 1ª morte já usado por lado (Último Suspiro).
+    revive_used: [bool; 2],
+    /// Vantagens por lado (escala + cartas).
+    edges: [SideEdge; 2],
     unmodeled: Vec<String>,
 }
 
@@ -476,26 +534,42 @@ impl InteractiveBattle {
         Self::new(roster, comp_a, comp_b, seed)
     }
 
-    /// Monta a batalha interativa. Não sorteia nada ainda: a 1ª rodada abre
-    /// de forma preguiçosa no primeiro `prompt`/`execute_action`.
+    /// Monta a batalha interativa sem vantagens (rodadas neutras).
+    /// Não sorteia nada ainda: a 1ª rodada abre de forma preguiçosa no
+    /// primeiro `prompt`/`execute_action`.
     pub fn new(roster: &Roster, comp_a: [usize; 4], comp_b: [usize; 4], seed: u64) -> Self {
+        Self::new_with_edges(roster, comp_a, comp_b, seed, SideEdge::default(), SideEdge::default())
+    }
+
+    /// Monta a batalha com vantagens por lado ([`SideEdge`]): escala de
+    /// inimigos/boss + bônus de cartas da run. Determinismo preservado.
+    pub fn new_with_edges(
+        roster: &Roster,
+        comp_a: [usize; 4],
+        comp_b: [usize; 4],
+        seed: u64,
+        edge_a: SideEdge,
+        edge_b: SideEdge,
+    ) -> Self {
         let mut unmodeled: Vec<String> = Vec::new();
-        let mk = |comp: [usize; 4], unmodeled: &mut Vec<String>| -> ISide {
+        let mk = |comp: [usize; 4], edge: &SideEdge, unmodeled: &mut Vec<String>| -> ISide {
             let units = comp
                 .iter()
-                .map(|&ci| {
+                .enumerate()
+                .map(|(slot, &ci)| {
                     let last = roster.characters.len().saturating_sub(1);
                     let c: &RosterChar = &roster.characters[ci.min(last)];
-                    let (u, notas) = Self::build_unit(c);
+                    let (u, notas) = Self::build_unit(c, edge, slot);
                     unmodeled.extend(notas);
                     u
                 })
                 .collect();
             ISide { units, order: Vec::new(), acted: [false; 4], first_chase_used: false }
         };
-        let sides = [mk(comp_a, &mut unmodeled), mk(comp_b, &mut unmodeled)];
+        let sides = [mk(comp_a, &edge_a, &mut unmodeled), mk(comp_b, &edge_b, &mut unmodeled)];
         InteractiveBattle {
             sides,
+            edges: [edge_a, edge_b],
             rng: Rng::new(seed),
             round: 0,
             first_starter: 0,
@@ -509,11 +583,14 @@ impl InteractiveBattle {
             chase_queue: Vec::new(),
             chase_side: 0,
             chain_links: 0,
+            chain_links_round: 0,
+            revive_used: [false; 2],
             unmodeled,
         }
     }
 
-    fn build_unit(c: &RosterChar) -> (IU, Vec<String>) {
+    /// Constrói uma unidade a partir do contrato + vantagem do lado.
+    fn build_unit(c: &RosterChar, edge: &SideEdge, slot: usize) -> (IU, Vec<String>) {
         let mut unmodeled: Vec<String> = Vec::new();
         let low = c.passive.effect.to_lowercase();
         let (skill, mystery) = Tier::derive(&c.mystery);
@@ -606,13 +683,22 @@ impl InteractiveBattle {
             }
         }
 
+        // Escala (inimigo/boss) e bônus de cartas, tudo inteiro:
+        // base = round(atk × dmg_scale); final = base × (1000 + bônus)/1000.
+        let hp_base = (c.hp.max(1) * edge.hp_scale_permille / PER_MILLE).max(1);
+        let hp_final = (hp_base * (PER_MILLE + edge.hp_bonus_permille + edge.unit_hp[slot]) / PER_MILLE).max(1);
+        let atk_base = (c.attack * edge.dmg_scale_permille / PER_MILLE).max(1);
+        let atk_final = (atk_base * (PER_MILLE + edge.atk_bonus_permille + edge.unit_atk[slot]) / PER_MILLE)
+            * (PER_MILLE + atk_buff_permille)
+            / PER_MILLE;
+
         (
             IU {
                 name: c.name.clone(),
                 role: c.role,
-                hp_max: c.hp.max(1),
-                hp: c.hp.max(1),
-                atk: c.attack * (PER_MILLE + atk_buff_permille) / PER_MILLE,
+                hp_max: hp_final,
+                hp: hp_final,
+                atk: atk_final,
                 def: c.defense,
                 spd,
                 fluxo: 0,
@@ -634,13 +720,14 @@ impl InteractiveBattle {
                 chase_dmg_bonus_permille,
                 chase_fluxo_bonus,
                 chased: false,
+                chase_used: 0,
                 acted: false,
                 alive: true,
                 standard: c.standard.clone(),
                 skill,
                 mystery,
                 chase: c.chase.clone(),
-                mystery_unlock_round: c.mystery_unlock_round,
+                mystery_unlock_round: c.mystery_unlock_round.saturating_sub(edge.unlock_early).max(1),
                 interrupt: c.interrupt,
             },
             unmodeled,
@@ -838,6 +925,15 @@ impl InteractiveBattle {
             }
         }
         out
+    }
+
+    /// Slots (do lado `side`) que podem perseguir agora — para o highlight
+    /// dourado da UI e para IAs.
+    pub fn chase_eligible_slots(&self, side: usize) -> Vec<usize> {
+        if self.chase_queue.is_empty() || side != self.chase_side {
+            return Vec::new();
+        }
+        self.chase_eligible()
     }
 
     /// Slots inimigos que ainda vão agiar nesta rodada (janela de interrupt).
@@ -1149,6 +1245,7 @@ impl InteractiveBattle {
         self.chase_queue.clear();
 
         // Início de rodada: fluxo, cooldowns, pulso de DoT, reset de chase.
+        self.chain_links_round = 0;
         for si in 0..2 {
             self.sides[si].first_chase_used = false;
             for slot in 0..4 {
@@ -1157,11 +1254,13 @@ impl InteractiveBattle {
                     continue;
                 }
                 u.chased = false;
+                u.chase_used = 0;
                 u.acted = false;
                 u.skill_cd = u.skill_cd.saturating_sub(1);
                 u.mystery_cd = u.mystery_cd.saturating_sub(1);
                 u.interrupt_cd = u.interrupt_cd.saturating_sub(1);
-                let ganho = FLUXO_PER_ROUND + u.round_start_fluxo.min(FLUXO_PASSIVE_CAP);
+                let ganho =
+                    FLUXO_PER_ROUND + self.edges[si].fluxo_per_round + u.round_start_fluxo.min(FLUXO_PASSIVE_CAP);
                 u.fluxo = (u.fluxo + ganho).min(FLUXO_CAP);
                 self.outbox.push(BattleEvent::FluxoGain { side: si, slot, amount: ganho });
                 if u.dot_turns > 0 {
@@ -1413,12 +1512,15 @@ impl InteractiveBattle {
         (atk * tier.heal_pct / 100, atk * tier.shield_pct / 100)
     }
 
-    /// Dano do elo de perseguição (com bônus da 1ª perseguição do time).
+    /// Dano do elo de perseguição: bônus da 1ª perseguição do time (passiva)
+    /// + Eco de Combate (+N‰ por elo da cadeia na rodada, com teto).
     fn chase_damage(&self, side: usize, chaser_slot: usize, enemy: usize, tslot: usize) -> i32 {
         let c = &self.sides[side].units[chaser_slot];
         let tdef = self.sides[enemy].units[tslot].def;
         let primeiro_elo = !self.sides[side].first_chase_used;
-        let bonus = if primeiro_elo { c.chase_dmg_bonus_permille } else { 0 };
+        let mut bonus = if primeiro_elo { c.chase_dmg_bonus_permille } else { 0 };
+        let eco = self.edges[side].chain_dmg_per_link * (self.chain_links_round as i32);
+        bonus += eco.min(self.edges[side].chain_dmg_cap);
         let mut dmg = pace(crate::combat::damage_after_def(c.atk_eff(), c.chase.damage_pct, tdef));
         if bonus > 0 {
             dmg = dmg * (PER_MILLE + bonus) / PER_MILLE;
@@ -1623,6 +1725,16 @@ impl InteractiveBattle {
             killed = true;
         }
         self.outbox.push(BattleEvent::Damage { side, slot, amount: d, killed });
+        // Último Suspiro: a 1ª morte do time revive com % do HP máximo.
+        if killed && !self.revive_used[side] && self.edges[side].revive_pct > 0 {
+            self.revive_used[side] = true;
+            let pct = self.edges[side].revive_pct;
+            let t = &mut self.sides[side].units[slot];
+            let hp = (t.hp_max * pct / 100).max(1);
+            t.hp = hp;
+            t.alive = true;
+            self.outbox.push(BattleEvent::Revive { side, slot, amount: hp });
+        }
     }
 
     // ── Chase ────────────────────────────────────────────────────────────────
@@ -1647,10 +1759,15 @@ impl InteractiveBattle {
         if st == ComboState::None || !self.sides[1 - side].units[tslot].alive {
             return Vec::new();
         }
+        let extra = self.edges[side].extra_chases;
         let mut out = Vec::new();
         for &s in &self.sides[side].order {
             let u = &self.sides[side].units[s];
-            if u.alive && !u.chased && u.chase.trigger == st && u.chase.max_per_round > 0 {
+            if u.alive
+                && u.chase_used < u.chase.max_per_round + extra
+                && u.chase.trigger == st
+                && u.chase.max_per_round > 0
+            {
                 out.push(s);
             }
         }
@@ -1676,10 +1793,12 @@ impl InteractiveBattle {
         let capplies = self.sides[side].units[chaser_slot].chase.applies_state;
         let primeiro_elo = !self.sides[side].first_chase_used;
         self.sides[side].units[chaser_slot].chased = true;
+        self.sides[side].units[chaser_slot].chase_used += 1;
         self.sides[side].first_chase_used = true;
         let dmg = self.chase_damage(side, chaser_slot, enemy, tslot);
         self.deal_damage(enemy, tslot, dmg, 0);
         self.chain_links += 1;
+        self.chain_links_round += 1;
         let killed = !self.sides[enemy].units[tslot].alive;
         self.outbox.push(BattleEvent::ChaseResolved {
             chaser: (side, chaser_slot),
