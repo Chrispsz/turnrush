@@ -88,6 +88,8 @@ pub struct RewardCard {
     pub revive_pct: i32,
     /// Antecipação da Mystery em rodadas.
     pub unlock_early: usize,
+    /// v0.8: desconto de fluxo na Mystery da unidade alvo (Gatilho Rápido).
+    pub mystery_discount: i32,
     /// Bônus de unidade: ATK/HP per-mille (cartas de unidade).
     pub unit_atk: i32,
     pub unit_hp: i32,
@@ -114,6 +116,7 @@ const fn card(id: &'static str, name: &'static str, desc: &'static str, class: C
         extra_chases: 0,
         revive_pct: 0,
         unlock_early: 0,
+        mystery_discount: 0,
         unit_atk: 0,
         unit_hp: 0,
         team_dmg_reduction: 0,
@@ -151,6 +154,7 @@ const fn tactic(
         extra_chases: 0,
         revive_pct: 0,
         unlock_early: 0,
+        mystery_discount: 0,
         unit_atk: 0,
         unit_hp: 0,
         round_end_heal_pct,
@@ -176,7 +180,11 @@ pub const CARD_POOL: [RewardCard; 12] = [
     // ── Unidade (escolher 1 unidade viva) ──
     RewardCard { unit_atk: 150, unit_hp: -50, ..card("furia-interior", "Fúria Interior", "Uma unidade viva: +15% de ATK, -5% de HP.", CardClass::Unit, Rarity::Common, 70, None) },
     RewardCard { unit_atk: -30, unit_hp: 120, ..card("manto-denso", "Manto Denso", "Uma unidade viva: +12% de HP, -3% de ATK.", CardClass::Unit, Rarity::Common, 60, None) },
-    RewardCard { unlock_early: 1, ..card("gatilho-rapido", "Gatilho Rápido", "Uma unidade viva: a Mystery destrava 1 rodada antes.", CardClass::Unit, Rarity::Uncommon, 50, Some(Faction::Storm)) },
+    RewardCard {
+        unlock_early: 1,
+        mystery_discount: 15,
+        ..card("gatilho-rapido", "Gatilho Rápido", "Uma unidade viva: a Mystery destrava 1 rodada antes E custa 15 ⚡ menos (com fluxo guardado, dispara na rodada 2).", CardClass::Unit, Rarity::Uncommon, 70, Some(Faction::Storm))
+    },
     RewardCard { unit_atk: 100, unit_hp: 100, ..card("veia-de-aco", "Veia de Aço", "Uma unidade viva: +10% de ATK e +10% de HP.", CardClass::Unit, Rarity::Rare, 110, None) },
     // ── Tática ──
     RewardCard { extra_chases: 1, ..card("ambidestria", "Ambidestria", "Cada unidade pode perseguir 2× por rodada.", CardClass::Tactic, Rarity::Rare, 90, Some(Faction::Verdant)) },
@@ -295,6 +303,8 @@ impl RunState {
             if slot < 4 {
                 e.unit_atk[slot] += c.unit_atk;
                 e.unit_hp[slot] += c.unit_hp;
+                e.unit_mystery_discount[slot] += c.mystery_discount;
+                e.unit_unlock_early[slot] += c.unlock_early;
             }
         }
         e

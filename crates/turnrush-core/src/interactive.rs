@@ -453,6 +453,10 @@ pub struct SideEdge {
     pub unit_atk: [i32; 4],
     /// Bônus de HP por slot (cartas de unidade).
     pub unit_hp: [i32; 4],
+    /// v0.8: desconto de fluxo na Mystery por slot (Gatilho Rápido).
+    pub unit_mystery_discount: [i32; 4],
+    /// v0.8: antecipação do unlock da Mystery por slot (Gatilho Rápido).
+    pub unit_unlock_early: [usize; 4],
 }
 
 impl Default for SideEdge {
@@ -470,6 +474,8 @@ impl Default for SideEdge {
             unlock_early: 0,
             unit_atk: [0; 4],
             unit_hp: [0; 4],
+            unit_mystery_discount: [0; 4],
+            unit_unlock_early: [0; 4],
         }
     }
 }
@@ -848,7 +854,10 @@ impl InteractiveBattle {
                 skill,
                 mystery,
                 chase: c.chase.clone(),
-                mystery_unlock_round: c.mystery_unlock_round.saturating_sub(edge.unlock_early).max(1),
+                mystery_unlock_round: c
+                    .mystery_unlock_round
+                    .saturating_sub(edge.unlock_early + edge.unit_unlock_early[slot])
+                    .max(1),
                 interrupt: c.interrupt,
             },
             unmodeled,
@@ -1006,6 +1015,7 @@ impl InteractiveBattle {
         }
         let u = &self.sides[side].units[slot];
         let mut out = Vec::new();
+        let custo_mystery = self.mystery_cost(side, slot);
         out.push(LegalAction {
             kind: ActionKind::Standard,
             fluxo_cost: 0,
@@ -1031,7 +1041,7 @@ impl InteractiveBattle {
         }
         if u.silence_turns == 0
             && u.mystery_cd == 0
-            && u.fluxo >= MYSTERY_COST
+            && u.fluxo >= custo_mystery
             && self.round >= u.mystery_unlock_round
         {
             let targeting = match u.mystery.targets {
@@ -1043,7 +1053,7 @@ impl InteractiveBattle {
             };
             out.push(LegalAction {
                 kind: ActionKind::Mystery,
-                fluxo_cost: MYSTERY_COST,
+                fluxo_cost: custo_mystery,
                 targeting,
                 name: u.mystery.name.clone(),
             });
@@ -1226,10 +1236,11 @@ impl InteractiveBattle {
                 })
             }
             ActionKind::Skill | ActionKind::Mystery => {
+                let custo_mystery = self.mystery_cost(side, slot);
                 let (tier, custo, cd) = if kind == ActionKind::Skill {
                     (&u.skill, SKILL_COST, u.skill_cd)
                 } else {
-                    (&u.mystery, MYSTERY_COST, u.mystery_cd)
+                    (&u.mystery, custo_mystery, u.mystery_cd)
                 };
                 if u.silence_turns > 0 {
                     return Err(ActionError::LockedOut);
@@ -1357,7 +1368,7 @@ impl InteractiveBattle {
             ActionKind::Skill => self.do_tier(side, slot, &self.sides[side].units[slot].skill.clone(), SKILL_COST, SKILL_CD, target),
             ActionKind::Mystery => {
                 let tier = self.sides[side].units[slot].mystery.clone();
-                self.do_tier(side, slot, &tier, MYSTERY_COST, MYSTERY_CD, target);
+                self.do_tier(side, slot, &tier, self.mystery_cost(side, slot), MYSTERY_CD, target);
             }
             ActionKind::Interrupt => self.do_interrupt(side, slot, target.expect("validado"))?,
         }
@@ -1407,7 +1418,7 @@ impl InteractiveBattle {
                 if u.fluxo < SKILL_COST && kind == ActionKind::Skill {
                     return Err(ActionError::NotEnoughFluxo);
                 }
-                if u.fluxo < MYSTERY_COST && kind == ActionKind::Mystery {
+                if u.fluxo < self.mystery_cost(side, slot) && kind == ActionKind::Mystery {
                     return Err(ActionError::NotEnoughFluxo);
                 }
                 if tier.targets == TargetSpec::AllySingle {
@@ -1557,6 +1568,11 @@ impl InteractiveBattle {
     fn eff_spd(&self, side: usize, slot: usize) -> i32 {
         let u = &self.sides[side].units[slot];
         u.spd + u.spd_accel_next - u.spd_debuff_next
+    }
+
+    /// Custo de fluxo da Mystery para a unidade (v0.8: desconto por carta).
+    pub fn mystery_cost(&self, side: usize, slot: usize) -> i32 {
+        (MYSTERY_COST - self.edges[side].unit_mystery_discount[slot.min(3)]).max(SKILL_COST)
     }
 
     fn spd_order(&self, side: usize) -> Vec<usize> {
@@ -3084,6 +3100,40 @@ mod tests {
     }
 
     // ── E.2: preview == resultado ────────────────────────────────────────────
+
+    /// v0.8 — Gatilho Rápido: Mystery destrava 1 rodada antes (R3→R2) e
+    /// custa 45⚡ — a fantasia "guardar fluxo e detonar na rodada 2" existe.
+    #[test]
+    fn gatilho_rapido_permite_mystery_na_r2() {
+        let r = roster();
+        let idx_reia = r.characters.iter().position(|c| c.id == "reia").expect("reia");
+        let mut edge = SideEdge::default();
+        edge.unit_unlock_early[0] = 1;
+        edge.unit_mystery_discount[0] = 15;
+        let mut bt = InteractiveBattle::new_with_edges(&r, [idx_reia, 1, 0, 3], [4, 5, 6, 7], 9, edge, SideEdge::default());
+        bt.round = 1;
+        forcar_vez(&mut bt, 0, 0);
+        // R2 é rodada par: a oferta de tática abre ANTES das ações (v0.7.1)
+        if bt.prompt().phase == PromptPhase::ChooseTactic {
+            let _ = bt.execute_action(ChosenAction::PickTactic { index: 0 }).expect("tática");
+        }
+        // R2: fluxo de 2 rodadas guardadas (10+15+10+15 = 50), já com o
+        // ganho da abertura contabilizado pelo teste
+        bt.sides[0].units[0].fluxo = 50;
+        let legais = bt.legal_actions(0, 0);
+        let m = legais.iter().find(|l| l.kind == ActionKind::Mystery).expect("mystery disponível na R2 com a carta");
+        assert_eq!(m.fluxo_cost, 45, "desconto aplicado");
+        // sem a carta, a mesma unidade estaria bloqueada (unlock R3)
+        let mut bt2 = InteractiveBattle::new(&r, [idx_reia, 1, 0, 3], [4, 5, 6, 7], 9);
+        bt2.sides[0].units[0].fluxo = 50;
+        bt2.round = 1;
+        forcar_vez(&mut bt2, 0, 0);
+        assert!(!bt2.legal_actions(0, 0).iter().any(|l| l.kind == ActionKind::Mystery), "sem carta: bloqueada na R2");
+        // executa com 50 → sobra 5
+        let _ = bt.execute_action(ChosenAction::Act { kind: ActionKind::Mystery, target: Some(1) }).expect("mystery na R2");
+        assert_eq!(bt.sides[0].units[0].fluxo, 5);
+    }
+
 
     #[test]
     fn preview_padrao_igual_resultado() {
