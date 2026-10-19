@@ -92,3 +92,37 @@ Economia do modo interativo: fluxo teto 100, +10/rodada, padrão grátis e gera
 Skill 120% (único/frente→100% multi) e Mystery 200% (único) / 100% (multi);
 cura/escudo da Mystery ×1,65. DoT do modo interativo: 30% do ATK/rodada, 2
 rodadas (o modo compacto v0.6 mantém 10% — fonte do Monte Carlo inalterada).
+
+## v0.8 — kits com assinatura (alvo único + mecânicas 100% modeladas)
+
+### Formas de alvo por papel (agora explícitas no JSON)
+| Papel | Skill | Mystery | Identidade |
+|---|---|---|---|
+| striker (Ignia/Nereo/Reia) | `enemy_single` 120% | `enemy_single` 200% | foco/eliminação — linha de trás acessível |
+| striker (Tina) | `random_2` | `random_2` | espalhar Veneno é a assinatura dela |
+| controller | herda | frente/todos + estado | negação de turno por faixa |
+| support | cura base | cura ×1,65 + utilidade | dissipar/regenerar/acelerar/energia |
+| guardian | escudo base | escudo final (+provocação/reflexo) | âncora com mecânica própria |
+
+- `skill_targets` (opcional, nível do personagem) permite forma própria da
+  Skill; ausente = herda a mystery (retrocompatível).
+- Unlock da Mystery: **R3 uniforme** (60⚡ não dá antes com +10/rodada —
+  o R2 por papel era texto morto). A carta **Gatilho Rápido** antecipa p/
+  R2 E dá -15⚡ de custo (banking real: 2 básicos guardados = 50⚡ → cast).
+- Orson: mystery CD 2→3 — a Provocação cobre o resto da rodada N + a N+1;
+  com CD 3 existe gap honesto (a provocação não é permanente).
+
+### Assinaturas que ERAM só texto e agora têm efeito
+Aro (escudo crescente, teto 2×ATK) · Volta (lentidão -5 SPD na próxima
+ordem) · Ivo (aura: DoT no atacante = -10% dano) · Alísio (Aceleração +25
+SPD) · Mel (Dissipação) · Yara (Regeneração 6%/2r) · Orson (Provocação +
+Muro Incandescente) · redução "na linha de frente" condicional de verdade.
+Reia: "age primeiro na abertura" REMOVIDA do texto (A-B intercalado não
+permite; SPD +10% mantém a identidade). Lista `unmodeled` do roster: VAZIA
+(teste contratual `unmodeled_fica_visivel`).
+
+### De-duplicação de passivas (variedade > uniformidade)
+Orson → Muro Incandescente (queima quem bate); Aro → reflexo 15% (sem
+redução); Dalva mantém -15% frontal. Amara mantém cura focada 5% no mais
+ferido; Yara vira cura em área 2% (todos). Três âncoras, três identidades;
+dois suportes de sustain com formas distintas.

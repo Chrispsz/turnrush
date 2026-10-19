@@ -4,6 +4,76 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/);
 versões seguem [SemVer](https://semver.org/lang/pt-BR/). O jogo está em
 **fase de mecânica**: arte/sprites/nomes finais são esboços conscientes.
 
+## [0.8.0] — kits com assinatura: alvo único, mecânicas reais e variedade
+
+> Auditoria de gameplay + passe de design inspirado em Into the Breach
+> (informação completa), Darkest Dungeon (posições que importam) e
+> Wildfrost/Slay the Spire (economia com "banking"). Princípio: cada
+> personagem é um ESPECIALISTA complementar — nada de faz-tudo.
+
+### Adicionado
+- **Alvo único (`enemy_single`) no contrato**: o jogador mira QUALQUER
+  inimigo vivo — linha de trás inclusive. Skill e Mystery dos **strikers**
+  (Ignia, Nereo, Reia) viraram single-target: Mystery na banda 200% (foco/
+  eliminação), Skill 120%. Tina mantém `random_2` (espalhar veneno é a
+  assinatura dela). O modo compacto resolve single como "primeiro da
+  frente" (determinístico, fonte do Monte Carlo recalibrada).
+- **`skill_targets` opcional no JSON v2**: forma de alvo própria da Skill
+  (ausente = herda a mystery — retrocompatível).
+- **Mystery inimiga com status público**: a fila de alvos mostra
+  `M:R3` (trancada) / `M:CD2` / `M:pronta` — informação simétrica que
+  afina interrupt e alvo único.
+- **Forma e custo no botão**: `[3] Mystery «…» · 1 alvo · ⚡60` — a
+  leitura da ação fica no botão (glanceability), não na memória.
+- **Novo evento `Taunted`** no log: "⚔ Provocação: ataques automáticos
+  miram X por N rodada(s)".
+
+### Corrigido — assinaturas mecânicas que existiam só no texto
+- **Aro**: escudo crescia +25%/rodada — AGORA cresce de verdade (teto 2×
+  ATK, antistall da lição v0.2 "Muralha").
+- **Volta**: arremessados perdiam 5 de velocidade "até o fim da rodada"
+  (sem efeito) — AGORA a lentidão vale na ordem da PRÓXIMA rodada (SPD
+  efetiva na timeline).
+- **Ivo**: "-10% de dano de inimigos com estado" não modelado — AGORA é
+  aura real: inimigos sob Veneno/Queimadura causam -10% (texto explícito).
+- **Alísio**: Aceleração não modelada — AGORA o alvo da mystery ganha
+  +25 de SPD na ordem da próxima rodada (age antes do oponente).
+- **Mel**: Dissipação não modelada — AGORA a mystery limpa
+  Veneno/Queimadura do alvo curado.
+- **Yara**: Regeneração não modelada — AGORA o alvo regenera 6% do HP
+  máximo por rodada durante 2 rodadas.
+- **Orson**: Provocação não modelada — AGORA a mystery provoca: ataques
+  automáticos inimigos miram Orson por 1 rodada (alvo MANUAL do jogador
+  NUNCA é forçado — decidir é do jogador). CD 2→3 para existir janela de
+  gap. Passiva nova: **Muro Incandescente** — quem bate com padrão em
+  Orson pega Queimadura por 1 rodada (30% do ATK dele).
+- **Dalva/Orson**: redução "na linha de frente" era SEMPRE ativa — AGORA
+  é condicional de verdade (vale nos slots 0-1).
+- **Reia**: removida a promessa "age primeiro na rodada de abertura"
+  (a estrutura A-B intercalada não permite); +10% de SPD mantido.
+- **Lista `unmodeled` do roster real: VAZIA** (teste contratual garante).
+
+### Alterado — variedade (passivas de-duplicadas)
+- **Orson** sai do clone "-15% de dano recebido" (virou muro de brasa);
+  **Aro** fica só com reflexo + escudo crescente; **Dalva** mantém a
+  redução frontal — três âncoras com identidades distintas.
+- **Yara** sai do clone da Amara (5% no mais ferido) — agora TODOS os
+  aliados curam 2% no fim da rodada; Amara mantém o foco.
+- **Unlock da Mystery = R3 uniforme**: com +10⚡/rodada, 60⚡ só é
+  alcançável na R3 — o "R2 por papel" era texto morto.
+- **Gatilho Rápido** redesenhada: unlock 1 rodada antes (R3→R2) E
+  Mystery custa 15⚡ menos (60→45) — guardar 2 rodadas de básico (50⚡)
+  detona a Mystery na R2. A fantasia de "banking" existe de verdade.
+- Bônus de cartas de unidade agora aplicam por slot (desconto/unlock
+  são da unidade escolhida, não do time todo).
+
+### Balanceamento
+- Gate 4v4 recalibrado pós-mudanças: desvio médio **0.048** (≤ 0.15),
+  espelho 0.513 ([0.42, 0.58]) — nenhum confronto extremo.
+- 102 testes no core (+11: alvo único com preview==result, provocação,
+  escudo crescente, lentidão, aura, aceleração, dissipação, regeneração,
+  curas EOR distintas, muro de brasa, Mystery na R2); 109 no workspace.
+
 ## [0.7.1] — resposta ao playtest 2026-10-18: manual que funciona e roguelike no meio da luta
 
 ### Corrigido
