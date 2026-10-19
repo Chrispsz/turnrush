@@ -315,6 +315,9 @@ pub enum TargetSpec {
     EnemiesFront,
     /// Todos os inimigos vivos.
     EnemiesAll,
+    /// Um inimigo ESPECÍFICO (v0.8): o jogador escolhe qualquer vivo —
+    /// acesso à linha de trás. Sem alvo explícito: o primeiro da frente.
+    EnemySingle,
     /// Um aliado (regra: mais ferido para cura/escudo; maior ATK para buff).
     AllySingle,
     /// O próprio usuário.
@@ -328,11 +331,12 @@ impl TargetSpec {
         match s {
             "enemies_front" => Ok(TargetSpec::EnemiesFront),
             "enemies_all" => Ok(TargetSpec::EnemiesAll),
+            "enemy_single" => Ok(TargetSpec::EnemySingle),
             "ally_single" => Ok(TargetSpec::AllySingle),
             "self" => Ok(TargetSpec::SelfTarget),
             "random_2" => Ok(TargetSpec::Random2),
             other => Err(format!(
-                "targets inválido: \"{other}\" (esperado enemies_front|enemies_all|ally_single|self|random_2)"
+                "targets inválido: \"{other}\" (esperado enemies_front|enemies_all|enemy_single|ally_single|self|random_2)"
             )),
         }
     }
@@ -341,6 +345,7 @@ impl TargetSpec {
         match self {
             TargetSpec::EnemiesFront => "enemies_front",
             TargetSpec::EnemiesAll => "enemies_all",
+            TargetSpec::EnemySingle => "enemy_single",
             TargetSpec::AllySingle => "ally_single",
             TargetSpec::SelfTarget => "self",
             TargetSpec::Random2 => "random_2",
@@ -441,19 +446,20 @@ pub struct RosterChar {
     pub chase: ChaseDef,
     pub passive: PassiveDef,
     /// Rodada em que a Mystery destrava no modo interativo (v0.7).
-    /// Default por papel: striker 3, demais 2 (ver `default_unlock_round`).
+    /// v0.8: padrão 3 para TODOS os papéis — com a economia de fluxo, 60 ⚡
+    /// só é alcançável na rodada 3 (o unlock R2 era texto morto).
     pub mystery_unlock_round: usize,
+    /// Forma de alvo da SKILL (v0.8). `None` = herda a mystery.
+    /// Campo opcional no contrato — ausência é retrocompatível.
+    pub skill_targets: Option<TargetSpec>,
     /// Interrupt opcional (v0.7). `None` = sem interrupt (default).
     pub interrupt: Option<InterruptDef>,
 }
 
 impl RosterChar {
     /// Rodada de desbloqueio da Mystery quando o JSON não define uma.
-    pub fn default_unlock_round(role: Role) -> usize {
-        match role {
-            Role::Striker => 3,
-            _ => 2,
-        }
+    pub fn default_unlock_round(_role: Role) -> usize {
+        3
     }
 }
 
@@ -624,7 +630,7 @@ fn parse_char(i: usize, j: &crate::json::Json) -> Result<RosterChar, String> {
     let passive = PassiveDef { name: req_str(p, "name", &pctx)?, effect: req_str(p, "effect", &pctx)? };
 
     // v0.7 — campos opcionais com defaults (migração: rosters antigos valem).
-    // `mystery_unlock_round` ausente → default por papel (striker 3, demais 2).
+    // `mystery_unlock_round` ausente → 3 para todos (v0.8; antes variava por papel).
     // `interrupt` ausente → None (personagem sem interrupção).
     let mystery_unlock_round = match j.get("unlock_schedule").and_then(|u| u.get("mystery_round")) {
         Some(v) => match v.as_int() {
@@ -654,6 +660,18 @@ fn parse_char(i: usize, j: &crate::json::Json) -> Result<RosterChar, String> {
         }
     };
 
+    // v0.8 — `skill_targets` opcional: forma de alvo da Skill. Ausente →
+    // a Skill herda a mystery (comportamento v0.7, retrocompatível).
+    let skill_targets = match j.get("skill_targets") {
+        None => None,
+        Some(v) => {
+            let s = v
+                .as_str()
+                .ok_or_else(|| format!("roster: '{ctx}.skill_targets' deve ser string"))?;
+            Some(TargetSpec::parse(s).map_err(|e| format!("roster: '{ctx}.{e}'"))?)
+        }
+    };
+
     Ok(RosterChar {
         id,
         name,
@@ -668,6 +686,7 @@ fn parse_char(i: usize, j: &crate::json::Json) -> Result<RosterChar, String> {
         chase,
         passive,
         mystery_unlock_round,
+        skill_targets,
         interrupt,
     })
 }
@@ -895,14 +914,21 @@ mod tests {
 
     #[test]
     fn roster_v2_do_jogo_tem_campos_v07() {
-        // Fonte da verdade: interrupt nos controllers, unlock por papel.
+        // Fonte da verdade: interrupt nos controllers, unlock R3 uniforme (v0.8).
         let src = include_str!("../../../data/roster/roster-v2.json");
         let r = Roster::from_json(src).expect("roster v2 válido");
         assert_eq!(r.len(), 16);
         for c in &r.characters {
-            let esperado = if c.role == Role::Striker { 3 } else { 2 };
-            assert_eq!(c.mystery_unlock_round, esperado, "unlock de {}", c.id);
+            assert_eq!(c.mystery_unlock_round, 3, "unlock de {}", c.id);
         }
+        // v0.8: strikers single-target (foco); resto mantém forma v0.7.
+        for id in ["ignia", "nereo", "reia"] {
+            let c = r.characters.iter().find(|c| c.id == id).expect(id);
+            assert_eq!(c.mystery.targets, TargetSpec::EnemySingle, "mystery de {id}");
+            assert_eq!(c.skill_targets, Some(TargetSpec::EnemySingle), "skill de {id}");
+        }
+        let tina = r.characters.iter().find(|c| c.id == "tina").expect("tina");
+        assert_eq!(tina.mystery.targets, TargetSpec::Random2);
         for id in ["nimbo", "ligeia", "ivo", "volta"] {
             let c = r.characters.iter().find(|c| c.id == id).expect(id);
             let it = c.interrupt.expect("controller tem interrupt");
@@ -947,7 +973,7 @@ mod tests {
         let r = Roster::from_json(src).expect("interrupt silence válido");
         let c = &r.characters[0];
         assert_eq!(c.interrupt.expect("some").kind, InterruptKind::Silence);
-        assert_eq!(c.mystery_unlock_round, 2, "controller default 2");
+        assert_eq!(c.mystery_unlock_round, 3, "default 3 (v0.8, todos os papéis)");
         // unlock_schedule explícito sobrescreve o default
         let src2 = src.replace(
             "\"interrupt\":{\"type\":\"silence\",\"window\":1},",

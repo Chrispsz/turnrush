@@ -14,8 +14,8 @@
         "name": "Detonação Solar",
         "chakra": 20,
         "cooldown": 3,
-        "targets": "enemies_front",
-        "damage_pct": 120,
+        "targets": "enemy_single",
+        "damage_pct": 200,
         "applies_state": "launch",
         "effect": "Golpe devastador que arremessa o alvo e o deixa em Queimadura (dano contínuo por 2 rodadas)."
       },
@@ -37,7 +37,8 @@
       },
       "unlock_schedule": {
         "mystery_round": 3
-      }
+      },
+      "skill_targets": "enemy_single"
     },
     {
       "id": "orson",
@@ -74,7 +75,7 @@
         "effect": "-15% de dano recebido enquanto estiver na linha de frente."
       },
       "unlock_schedule": {
-        "mystery_round": 2
+        "mystery_round": 3
       }
     },
     {
@@ -112,7 +113,7 @@
         "effect": "No fim da rodada, cura 5% do HP do aliado com menos HP."
       },
       "unlock_schedule": {
-        "mystery_round": 2
+        "mystery_round": 3
       }
     },
     {
@@ -150,7 +151,7 @@
         "effect": "A primeira perseguição da equipe em cada rodada causa +10% de dano."
       },
       "unlock_schedule": {
-        "mystery_round": 2
+        "mystery_round": 3
       },
       "interrupt": {
         "type": "stun",
@@ -170,8 +171,8 @@
         "name": "Corte da Maré Alta",
         "chakra": 20,
         "cooldown": 3,
-        "targets": "enemies_front",
-        "damage_pct": 115,
+        "targets": "enemy_single",
+        "damage_pct": 200,
         "applies_state": "launch",
         "effect": "Corte pesado que arremessa o alvo e ignora 50% do escudo dele."
       },
@@ -193,7 +194,8 @@
       },
       "unlock_schedule": {
         "mystery_round": 3
-      }
+      },
+      "skill_targets": "enemy_single"
     },
     {
       "id": "dalva",
@@ -230,7 +232,7 @@
         "effect": "-15% de dano recebido na linha de frente."
       },
       "unlock_schedule": {
-        "mystery_round": 2
+        "mystery_round": 3
       }
     },
     {
@@ -268,7 +270,7 @@
         "effect": "No início da rodada, gera +8 de chakra para a equipe."
       },
       "unlock_schedule": {
-        "mystery_round": 2
+        "mystery_round": 3
       }
     },
     {
@@ -306,7 +308,7 @@
         "effect": "Inimigos Derrubados recebem +15% de dano dos ataques da equipe."
       },
       "unlock_schedule": {
-        "mystery_round": 2
+        "mystery_round": 3
       },
       "interrupt": {
         "type": "stun",
@@ -386,7 +388,7 @@
         "effect": "-15% de dano recebido; reflete 10% do dano de ataque padrão recebido."
       },
       "unlock_schedule": {
-        "mystery_round": 2
+        "mystery_round": 3
       }
     },
     {
@@ -424,7 +426,7 @@
         "effect": "No fim da rodada, cura 5% do HP do aliado com menos HP."
       },
       "unlock_schedule": {
-        "mystery_round": 2
+        "mystery_round": 3
       }
     },
     {
@@ -462,7 +464,7 @@
         "effect": "Inimigos com estado aplicado pela equipe causam -10% de dano."
       },
       "unlock_schedule": {
-        "mystery_round": 2
+        "mystery_round": 3
       },
       "interrupt": {
         "type": "stun",
@@ -482,8 +484,8 @@
         "name": "Impacto do Trovão",
         "chakra": 30,
         "cooldown": 3,
-        "targets": "enemies_front",
-        "damage_pct": 130,
+        "targets": "enemy_single",
+        "damage_pct": 200,
         "applies_state": "launch",
         "effect": "Dano devastador que arremessa o alvo e ignora 30% da defesa dele."
       },
@@ -505,7 +507,8 @@
       },
       "unlock_schedule": {
         "mystery_round": 3
-      }
+      },
+      "skill_targets": "enemy_single"
     },
     {
       "id": "aki",
@@ -542,7 +545,7 @@
         "effect": "Ao ser atingida por ataque padrão, contra-ataca com 40% do ataque (1x por rodada)."
       },
       "unlock_schedule": {
-        "mystery_round": 2
+        "mystery_round": 3
       }
     },
     {
@@ -580,7 +583,7 @@
         "effect": "A primeira perseguição da equipe por rodada gera +5 de chakra."
       },
       "unlock_schedule": {
-        "mystery_round": 2
+        "mystery_round": 3
       }
     },
     {
@@ -618,7 +621,7 @@
         "effect": "Inimigos Arremessados perdem 5 de velocidade até o fim da rodada."
       },
       "unlock_schedule": {
-        "mystery_round": 2
+        "mystery_round": 3
       },
       "interrupt": {
         "type": "stun",

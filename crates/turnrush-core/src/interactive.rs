@@ -327,10 +327,15 @@ struct Tier {
 impl Tier {
     /// Deriva os dois tiers a partir da mystery do contrato.
     ///
-    /// Skill = forma base (dano 120/100, utilidade do contrato, SEM estado);
-    /// Mystery = forma final (200 único / 100 multi, utilidade ×1650‰, COM
-    /// estado/DoT/perfuração).
-    fn derive(m: &MysteryDef) -> (Tier, Tier) {
+    /// Skill = forma base (dano 120 único / 100 multi, utilidade do contrato,
+    /// SEM estado); Mystery = forma final (200 único / 100 multi, utilidade
+    /// ×1650‰, COM estado/DoT/perfuração).
+    ///
+    /// v0.8: `skill_targets` permite forma de alvo própria da Skill (ex.:
+    /// striker com Skill single 120% e Mystery single 200%). `None` = herda
+    /// a mystery (comportamento v0.7). `EnemySingle` NÃO é multi — cai nas
+    /// bandas de alvo único.
+    fn derive(m: &MysteryDef, skill_targets: Option<TargetSpec>) -> (Tier, Tier) {
         let low = m.effect.to_lowercase();
         let heal_json = if low.contains("cura") { pct_after(&low, "cura").unwrap_or(0) } else { 0 };
         let shield_json = if low.contains("escudo") && !low.contains("ignora") {
@@ -350,11 +355,13 @@ impl Tier {
             if low.contains("ignora") && low.contains("escudo") { pct_after(&low, "escudo").unwrap_or(0) } else { 0 };
         let dot = low.contains("queimadura") || low.contains("veneno");
         let multi = matches!(m.targets, TargetSpec::EnemiesFront | TargetSpec::EnemiesAll | TargetSpec::Random2);
+        let skill_t = skill_targets.unwrap_or(m.targets);
+        let skill_multi = matches!(skill_t, TargetSpec::EnemiesFront | TargetSpec::EnemiesAll | TargetSpec::Random2);
 
         let skill = Tier {
             name: m.name.clone(),
-            targets: m.targets,
-            dmg_pct: if heal_json > 0 || shield_json > 0 { 0 } else if multi { SKILL_DMG_AOE } else { SKILL_DMG_SINGLE },
+            targets: skill_t,
+            dmg_pct: if heal_json > 0 || shield_json > 0 { 0 } else if skill_multi { SKILL_DMG_AOE } else { SKILL_DMG_SINGLE },
             heal_pct: heal_json,
             shield_pct: shield_json,
             team_fluxo,
@@ -617,7 +624,7 @@ impl InteractiveBattle {
     fn build_unit(c: &RosterChar, edge: &SideEdge, slot: usize) -> (IU, Vec<String>) {
         let mut unmodeled: Vec<String> = Vec::new();
         let low = c.passive.effect.to_lowercase();
-        let (skill, mystery) = Tier::derive(&c.mystery);
+        let (skill, mystery) = Tier::derive(&c.mystery, c.skill_targets);
         let condicional = low.contains("contra") || low.contains("ao ser") || low.contains("ao atingir");
 
         // +X% de dano incondicional (buff passivo permanente)
@@ -920,7 +927,10 @@ impl InteractiveBattle {
         if u.silence_turns == 0 && u.skill_cd == 0 && u.fluxo >= SKILL_COST {
             let targeting = match u.skill.targets {
                 TargetSpec::AllySingle => TargetKind::Ally,
-                TargetSpec::SelfTarget | TargetSpec::EnemiesFront | TargetSpec::EnemiesAll | TargetSpec::Random2 => TargetKind::Auto,
+                TargetSpec::EnemySingle => TargetKind::Enemy,
+                TargetSpec::SelfTarget | TargetSpec::EnemiesFront | TargetSpec::EnemiesAll | TargetSpec::Random2 => {
+                    TargetKind::Auto
+                }
             };
             out.push(LegalAction {
                 kind: ActionKind::Skill,
@@ -936,7 +946,10 @@ impl InteractiveBattle {
         {
             let targeting = match u.mystery.targets {
                 TargetSpec::AllySingle => TargetKind::Ally,
-                TargetSpec::SelfTarget | TargetSpec::EnemiesFront | TargetSpec::EnemiesAll | TargetSpec::Random2 => TargetKind::Auto,
+                TargetSpec::EnemySingle => TargetKind::Enemy,
+                TargetSpec::SelfTarget | TargetSpec::EnemiesFront | TargetSpec::EnemiesAll | TargetSpec::Random2 => {
+                    TargetKind::Auto
+                }
             };
             out.push(LegalAction {
                 kind: ActionKind::Mystery,
@@ -1156,12 +1169,15 @@ impl InteractiveBattle {
                         notes,
                     })
                 } else {
-                    let slots = self.tier_enemy_slots(side, tier);
+                    let slots = self.tier_enemy_slots(side, tier, target);
                     if tier.targets == TargetSpec::Random2 {
                         notes.push(format!(
                             "alvos aleatórios: 2 sorteados entre {} vivos (prévia lista candidatos)",
                             slots.len()
                         ));
+                    }
+                    if tier.targets == TargetSpec::EnemySingle && target.is_none() {
+                        notes.push("alvo automático: primeiro vivo da frente (alvo manual disponível)".to_string());
                     }
                     let damage: i32 = slots.iter().map(|&ts| self.tier_damage(side, slot, tier, ts)).sum();
                     let states: Vec<(usize, usize, ComboState)> = slots
@@ -1307,6 +1323,15 @@ impl InteractiveBattle {
                 if tier.targets == TargetSpec::AllySingle {
                     if let Some(t) = target {
                         if t >= 4 || !self.sides[side].units[t].alive {
+                            return Err(ActionError::BadTarget);
+                        }
+                    }
+                }
+                // v0.8: alvo único inimigo — explícito deve estar vivo;
+                // `None` cai no auto (primeiro vivo da frente).
+                if tier.targets == TargetSpec::EnemySingle {
+                    if let Some(t) = target {
+                        if t >= 4 || !self.sides[1 - side].units[t].alive {
                             return Err(ActionError::BadTarget);
                         }
                     }
@@ -1581,7 +1606,8 @@ impl InteractiveBattle {
     }
 
     /// Slots inimigos efetivos de um tier (determinístico exceto Random2).
-    fn tier_enemy_slots(&self, side: usize, tier: &Tier) -> Vec<usize> {
+    /// `target` é o alvo explícito de `EnemySingle` (None = auto frente).
+    fn tier_enemy_slots(&self, side: usize, tier: &Tier, target: Option<usize>) -> Vec<usize> {
         let enemy = 1 - side;
         let mut slots: Vec<usize> = match tier.targets {
             TargetSpec::EnemiesFront => {
@@ -1590,6 +1616,14 @@ impl InteractiveBattle {
                 if front.is_empty() { living } else { front }
             }
             TargetSpec::EnemiesAll => self.sides[enemy].living_slots(),
+            // v0.8: alvo único — o escolhido, ou o primeiro vivo da frente.
+            TargetSpec::EnemySingle => {
+                let escolhido = target.filter(|&t| t < 4 && self.sides[enemy].units[t].alive);
+                match escolhido {
+                    Some(t) => vec![t],
+                    None => self.sides[enemy].living_slots().into_iter().take(1).collect(),
+                }
+            }
             // Random2 é resolvido na execução (RNG); prévia lista candidatos
             TargetSpec::Random2 => self.sides[enemy].living_slots(),
             _ => Vec::new(),
@@ -1754,9 +1788,9 @@ impl InteractiveBattle {
                     self.sides[side].units[tslot].reflect_permille = tier.reflect_pct * 10;
                 }
             }
-            TargetSpec::EnemiesFront | TargetSpec::EnemiesAll | TargetSpec::Random2 => {
+            TargetSpec::EnemiesFront | TargetSpec::EnemiesAll | TargetSpec::EnemySingle | TargetSpec::Random2 => {
                 let enemy = 1 - side;
-                let mut slots = self.tier_enemy_slots(side, tier);
+                let mut slots = self.tier_enemy_slots(side, tier, target);
                 if tier.targets == TargetSpec::Random2 {
                     let n = slots.len().min(2);
                     self.rng.shuffle(&mut slots);
@@ -2255,7 +2289,7 @@ mod tests {
     fn mystery_destrava_por_rodada_e_custo() {
         let r = test_roster();
         let mut bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 0);
-        // striker (slot 0) destrava na R3; controller (slot 2) na R2
+        // v0.8: unlock R3 uniforme — striker (slot 0) e controller (slot 2)
         bt.sides[0].units[0].fluxo = 100;
         bt.sides[0].units[2].fluxo = 100;
         let _ = bt.prompt();
@@ -2264,15 +2298,15 @@ mod tests {
         let legais_striker = bt.legal_actions(0, 0);
         assert!(!legais_striker.iter().any(|l| l.kind == ActionKind::Mystery), "striker: mystery só na R3");
         let legais_ctrl = bt.legal_actions(0, 2);
-        assert!(!legais_ctrl.iter().any(|l| l.kind == ActionKind::Mystery), "controller: mystery só na R2");
+        assert!(!legais_ctrl.iter().any(|l| l.kind == ActionKind::Mystery), "controller: mystery só na R3");
         bt.round = 2;
         let legais_ctrl = bt.legal_actions(0, 2);
-        assert!(legais_ctrl.iter().any(|l| l.kind == ActionKind::Mystery), "controller destrava na R2");
-        let legais_striker = bt.legal_actions(0, 0);
-        assert!(!legais_striker.iter().any(|l| l.kind == ActionKind::Mystery), "striker ainda bloqueado na R2");
+        assert!(!legais_ctrl.iter().any(|l| l.kind == ActionKind::Mystery), "controller ainda bloqueado na R2");
         bt.round = 3;
         let legais_striker = bt.legal_actions(0, 0);
         assert!(legais_striker.iter().any(|l| l.kind == ActionKind::Mystery), "striker destrava na R3");
+        let legais_ctrl = bt.legal_actions(0, 2);
+        assert!(legais_ctrl.iter().any(|l| l.kind == ActionKind::Mystery), "controller destrava na R3");
         // mystery custa 60
         let m = legais_striker.iter().find(|l| l.kind == ActionKind::Mystery).expect("mystery legal");
         assert_eq!(m.fluxo_cost, MYSTERY_COST);
@@ -2868,9 +2902,11 @@ mod tests {
         let idx_mel = r.characters.iter().position(|c| c.id == "mel").expect("mel");
         let bt = InteractiveBattle::new(&r, [idx_reia, idx_volta, idx_mel, idx_mel], [idx_mel, idx_mel, idx_mel, idx_mel], 1);
         let reia = &bt.sides[0].units[0];
-        // enemies_front atinge até 2 alvos = banda multi-alvo na skill E mystery
-        assert_eq!(reia.skill.dmg_pct, SKILL_DMG_AOE, "skill frente (multi) = 100%");
-        assert_eq!(reia.mystery.dmg_pct, MYSTERY_DMG_AOE, "mystery frente (multi) = 100%");
+        // v0.8: striker single-target — banda de ALVO ÚNICO na skill E mystery
+        assert_eq!(reia.skill.targets, TargetSpec::EnemySingle, "skill single");
+        assert_eq!(reia.skill.dmg_pct, SKILL_DMG_SINGLE, "skill single = 120%");
+        assert_eq!(reia.mystery.targets, TargetSpec::EnemySingle, "mystery single");
+        assert_eq!(reia.mystery.dmg_pct, MYSTERY_DMG_SINGLE, "mystery single = 200%");
         assert_eq!(reia.mystery.applies, ComboState::Launch, "mystery preserva estado do contrato");
         assert_eq!(reia.skill.applies, ComboState::None, "skill NÃO aplica estado");
         let volta = &bt.sides[0].units[1];
@@ -2915,6 +2951,85 @@ mod tests {
         // outros estão de pé)
         let esperado = (0..4).find(|&s| s != p.slot).unwrap();
         assert_eq!(pv.targets.first().copied(), Some((1 - p.side, esperado)), "cai no primeiro vivo da frente");
+    }
+
+    /// v0.8 — alvo único (enemy_single): o jogador mira QUALQUER inimigo
+    /// vivo, incluindo a linha de trás; a prévia é exata e casa com a
+    /// execução. Sem alvo explícito, cai no primeiro vivo da frente.
+    #[test]
+    fn alvo_unico_mira_linha_de_tras_e_casa_com_execucao() {
+        let r = roster();
+        let idx_reia = r.characters.iter().position(|c| c.id == "reia").expect("reia");
+        let mut bt = InteractiveBattle::new(&r, [idx_reia, 1, 2, 3], [4, 5, 6, 7], 9);
+        // ronda 3 + fluxo pra mystery destravar
+        bt.round = 2;
+        bt.sides[0].units[0].fluxo = 100;
+        forcar_vez(&mut bt, 0, 0);
+        // legal: mystery pede fila de alvos inimigos (TargetKind::Enemy)
+        let legal = bt.legal_actions(0, 0).into_iter().find(|l| l.kind == ActionKind::Mystery).expect("mystery legal");
+        assert_eq!(legal.targeting, TargetKind::Enemy, "mystery single pede alvo");
+        // prévia com alvo da LINHA DE TRÁS (slot 3) = um alvo só, dano exato
+        let pv = bt
+            .preview_action(0, 0, ChosenAction::Act { kind: ActionKind::Mystery, target: Some(3) })
+            .expect("prévia single");
+        assert_eq!(pv.targets, vec![(1, 3)], "mira o slot 3 (linha de trás)");
+        assert!(pv.damage > 0);
+        // execução no MESMO alvo gera exatamente 1 evento de dano no slot 3,
+        // com o MESMO valor da prévia (preview == result)
+        let evs = bt
+            .execute_action(ChosenAction::Act { kind: ActionKind::Mystery, target: Some(3) })
+            .expect("executada");
+        let danos: Vec<i32> = evs
+            .iter()
+            .filter_map(|e| match e {
+                BattleEvent::Damage { side, slot, amount, .. } if *side == 1 && *slot == 3 => Some(*amount),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(danos.len(), 1, "um alvo = um hit");
+        assert_eq!(danos[0], pv.damage, "preview == result");
+    }
+
+    /// v0.8 — alvo único sem alvo explícito cai no primeiro vivo da frente.
+    #[test]
+    fn alvo_unico_sem_alvo_cai_no_auto_frente() {
+        let r = roster();
+        let idx_reia = r.characters.iter().position(|c| c.id == "reia").expect("reia");
+        let mut bt = InteractiveBattle::new(&r, [idx_reia, 1, 2, 3], [4, 5, 6, 7], 9);
+        bt.round = 2;
+        bt.sides[0].units[0].fluxo = 100;
+        forcar_vez(&mut bt, 0, 0);
+        let pv = bt
+            .preview_action(0, 0, ChosenAction::Act { kind: ActionKind::Mystery, target: None })
+            .expect("prévia auto");
+        assert_eq!(pv.targets, vec![(1, 0)], "auto = primeiro vivo da frente");
+    }
+
+    /// v0.8 — `skill_targets` no contrato: ausente herda a mystery;
+    /// presente permite formas distintas por tier.
+    #[test]
+    fn skill_targets_override_no_contrato() {
+        let base = r#"{"version":2,"characters":[
+            {"id":"s1","name":"S1","faction":"ember","role":"striker","hp":900,"attack":100,"defense":40,"speed":50,
+             "mystery":{"name":"M","chakra":20,"cooldown":3,"targets":"enemies_front","damage_pct":100,"applies_state":"none","effect":""},
+             "standard":{"name":"S","damage_pct":70,"applies_state":"none"},
+             "chase":{"name":"C","trigger":"launch","damage_pct":30,"applies_state":"none","max_per_round":1},
+             "passive":{"name":"","effect":""}}
+        ]}"#;
+        let r_herdado = Roster::from_json(base).expect("herdado");
+        let bt = InteractiveBattle::new(&r_herdado, [0, 0, 0, 0], [0, 0, 0, 0], 0);
+        assert_eq!(bt.sides[0].units[0].skill.targets, TargetSpec::EnemiesFront, "skill herda a mystery");
+        let com_override = base.replace(
+            "\"passive\":{\"name\":\"\",\"effect\":\"\"}",
+            "\"passive\":{\"name\":\"\",\"effect\":\"\"},\"skill_targets\":\"enemy_single\"",
+        );
+        let r2 = Roster::from_json(&com_override).expect("override");
+        let bt2 = InteractiveBattle::new(&r2, [0, 0, 0, 0], [0, 0, 0, 0], 0);
+        let u = &bt2.sides[0].units[0];
+        assert_eq!(u.skill.targets, TargetSpec::EnemySingle, "skill com forma própria");
+        assert_eq!(u.skill.dmg_pct, SKILL_DMG_SINGLE, "single → banda 120%");
+        assert_eq!(u.mystery.targets, TargetSpec::EnemiesFront, "mystery inalterada");
+        assert_eq!(u.mystery.dmg_pct, MYSTERY_DMG_AOE, "multi → banda 100%");
     }
 
     /// B1 (feedback 2026-10-18): geração de decisão — estável enquanto a

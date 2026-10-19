@@ -850,7 +850,7 @@ impl Formation4v4 {
                     }
                 }
             }
-            TargetSpec::EnemiesFront | TargetSpec::EnemiesAll | TargetSpec::Random2 => {
+            TargetSpec::EnemiesFront | TargetSpec::EnemiesAll | TargetSpec::EnemySingle | TargetSpec::Random2 => {
                 let enemy = 1 - side_idx;
                 let mut targets_slots: Vec<usize> = match targets {
                     TargetSpec::EnemiesFront => {
@@ -859,6 +859,9 @@ impl Formation4v4 {
                         if front.is_empty() { living } else { front }
                     }
                     TargetSpec::EnemiesAll => self.sides[enemy].living_slots(),
+                    // v0.8: modo compacto não tem mira manual — single cai no
+                    // primeiro vivo da frente (determinístico, igual ao auto).
+                    TargetSpec::EnemySingle => self.sides[enemy].living_slots().into_iter().take(1).collect(),
                     TargetSpec::Random2 => {
                         let mut living = self.sides[enemy].living_slots();
                         let n = living.len().min(2);
