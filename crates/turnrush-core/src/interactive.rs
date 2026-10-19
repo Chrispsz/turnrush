@@ -171,6 +171,9 @@ pub struct LegalAction {
     pub targeting: TargetKind,
     /// Nome de exibição da habilidade.
     pub name: String,
+    /// v0.8: forma de alvo em texto curto para a UI ("1 alvo", "frente",
+    /// "todos", "2 aleat.", "aliado", "si", ""). Glanceability.
+    pub targets_label: &'static str,
 }
 
 /// Decisão do controlador (jogador ou IA) para a vez atual.
@@ -335,6 +338,19 @@ struct Tier {
     taunt: bool,
     /// v0.8 (mystery só): Aceleração — +N de SPD efetiva na próxima rodada.
     accel_next: i32,
+}
+
+
+/// Rótulo curto da forma de alvo (UI v0.8).
+fn targets_label(t: TargetSpec) -> &'static str {
+    match t {
+        TargetSpec::EnemySingle => "1 alvo",
+        TargetSpec::EnemiesFront => "frente",
+        TargetSpec::EnemiesAll => "todos",
+        TargetSpec::Random2 => "2 aleat.",
+        TargetSpec::AllySingle => "aliado",
+        TargetSpec::SelfTarget => "si",
+    }
 }
 
 impl Tier {
@@ -1002,6 +1018,7 @@ impl InteractiveBattle {
                     fluxo_cost: 0,
                     targeting: TargetKind::Auto,
                     name: format!("Perseguir com {}", self.sides[side].units[s].chase.name),
+                    targets_label: "",
                 })
                 .collect();
             // …ou recusar (tática válida).
@@ -1010,6 +1027,7 @@ impl InteractiveBattle {
                 fluxo_cost: 0,
                 targeting: TargetKind::Auto,
                 name: "Recusar perseguição".to_string(),
+                targets_label: "",
             });
             return out;
         }
@@ -1023,6 +1041,7 @@ impl InteractiveBattle {
             // executa direto, sem fila de alvos (básico mira o espelhado).
             targeting: TargetKind::Auto,
             name: u.standard.name.clone(),
+            targets_label: "",
         });
         if u.silence_turns == 0 && u.skill_cd == 0 && u.fluxo >= SKILL_COST {
             let targeting = match u.skill.targets {
@@ -1037,6 +1056,7 @@ impl InteractiveBattle {
                 fluxo_cost: SKILL_COST,
                 targeting,
                 name: u.skill.name.clone(),
+                targets_label: targets_label(u.skill.targets),
             });
         }
         if u.silence_turns == 0
@@ -1056,6 +1076,7 @@ impl InteractiveBattle {
                 fluxo_cost: custo_mystery,
                 targeting,
                 name: u.mystery.name.clone(),
+                targets_label: targets_label(u.mystery.targets),
             });
         }
         if let Some(def) = u.interrupt {
@@ -1074,6 +1095,7 @@ impl InteractiveBattle {
                         fluxo_cost: INTERRUPT_COST,
                         targeting: TargetKind::Enemy,
                         name: nome.to_string(),
+                        targets_label: "1 alvo",
                     });
                 }
             }

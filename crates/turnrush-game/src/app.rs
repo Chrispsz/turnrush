@@ -432,7 +432,7 @@ const AJUDA: [(&str, &str); 7] = [
     ),
     (
         "2 · BATALHA 4v4 (VOCÊ COMANDA TUDO)",
-        "Timeline visível (SPD); A-B intercalado; quem abre a 1ª rodada é sorteado.\nPainel de comando: Padrão [1] grátis (⚡+15) · Skill [2] ⚡30/CD 2 ·\nMystery [3] ⚡60/CD 3 (destrava R2/R3 por papel) · Interrupt [4] ⚡35/CD 3.\nO PADRÃO tem alvo automático: mira o inimigo na sua frente (1↔1, 2↔2…;\ncaiu, o primeiro vivo da frente) — dispara direto, sem fila de alvos.\nAlvo manual só em poder focado (cura aliada/interrupt). Fluxo: +10/rodada,\nteto 100. Prévia EXATA antes de confirmar. Máximo de 10 rodadas —\ndesempate por % de vida.",
+        "Timeline visível (SPD); A-B intercalado; quem abre a 1ª rodada é sorteado.\nPainel de comando: Padrão [1] grátis (⚡+15) · Skill [2] ⚡30/CD 2 ·\nMystery [3] ⚡60/CD 3 (destrava R3; a carta Gatilho Rápido antecipa) ·\nInterrupt [4] ⚡35/CD 3. O PADRÃO tem alvo automático: mira o inimigo na\nsua frente (1↔1, 2↔2…; caiu, o primeiro vivo da frente). STRIKERS têm\nALVO ÚNICO (skill/mystery): mira QUALQUER inimigo — linha de trás\ninclusive. Fluxo: +10/rodada, teto 100; guardar ⚡ antecipa a Mystery.\nPrévia EXATA antes de confirmar. Máximo de 10 rodadas — desempate por\n% de vida.",
     ),
     (
         "3 · CHAIN COMBOS — PERSEGUIÇÃO MANUAL",
@@ -452,7 +452,7 @@ const AJUDA: [(&str, &str); 7] = [
     ),
     (
         "7 · CONTROLES DA BATALHA",
-        "MOUSE: clique na ação — o Padrão dispara direto (alvo automático);\npoderes focados abrem a fila de alvos. TECLADO: [1]-[4] ações · Q/W/E/R\nalvo inimigo · A/S/D/F alvo aliado · ENTER confirma/auto-alvo/persegue ·\nESC cancela/recusa · ESPAÇO 2× · Z modo Auto (IA joga por você).\nA IA inimiga usa EXATAMENTE as mesmas informações que você.",
+        "MOUSE: clique na ação — o Padrão dispara direto (alvo automático);\npoderes focados e alvos únicos abrem a fila de alvos (o Auto da fila\nusa o primeiro da frente). TECLADO: [1]-[4] ações · Q/W/E/R alvo\ninimigo · A/S/D/F alvo aliado · ENTER confirma/auto-alvo/persegue ·\nESC cancela/recusa · ESPAÇO 2× · Z modo Auto (IA joga por você).\nOs botões mostram a FORMA (· 1 alvo / frente / todos / 2 aleat.) e o\ncusto ⚡. O status M: da Mystery inimiga é público (R/CD/pronta).\nA IA inimiga usa EXATAMENTE as mesmas informações que você.",
     ),
 ];
 
@@ -482,6 +482,7 @@ fn rotulo_alvo(t: TargetSpec) -> &'static str {
     match t {
         TargetSpec::EnemiesFront => "frente",
         TargetSpec::EnemiesAll => "todos",
+        TargetSpec::EnemySingle => "1 alvo (livre)",
         TargetSpec::AllySingle => "aliado",
         TargetSpec::SelfTarget => "si",
         TargetSpec::Random2 => "2 aleatórios",
@@ -2265,7 +2266,29 @@ fn preencher_painel(ctl: &mut BattleController, chase: bool, pending: &mut Pendi
     let legais = ctl.bt.legal_actions(p.side, p.slot);
     let achar = |k: ActionKind| legais.iter().find(|l| l.kind == k).cloned();
     let mk = |k: ActionKind, nome: String| match achar(k) {
-        Some(l) => (format!("[{}] {nome}", match k { ActionKind::Standard => "1", ActionKind::Skill => "2", ActionKind::Mystery => "3", _ => "4" }), l.fluxo_cost, true, String::new()),
+        Some(l) => {
+            // v0.8: forma de alvo no botão (glanceability) — só onde ajuda
+            let forma = if matches!(k, ActionKind::Skill | ActionKind::Mystery) && !l.targets_label.is_empty() {
+                format!(" · {}", l.targets_label)
+            } else {
+                String::new()
+            };
+            (
+                format!(
+                    "[{}] {nome}{forma} · ⚡{}",
+                    match k {
+                        ActionKind::Standard => "1",
+                        ActionKind::Skill => "2",
+                        ActionKind::Mystery => "3",
+                        _ => "4",
+                    },
+                    l.fluxo_cost
+                ),
+                l.fluxo_cost,
+                true,
+                String::new(),
+            )
+        }
         None => {
             let motivo = match k {
                 ActionKind::Mystery => {
@@ -2298,11 +2321,27 @@ fn preencher_painel(ctl: &mut BattleController, chase: bool, pending: &mut Pendi
         mk(ActionKind::Mystery, format!("Mystery «{}»", u.mystery_name)),
         mk(ActionKind::Interrupt, "Interrupt".to_string()),
     ];
-    // alvos
+    // alvos (v0.8: status da Mystery inimiga — informação pública e simétrica;
+    // ajuda a decidir interrupt e alvo único sem abrir a tela do inimigo)
     for k in 0..4 {
         let e = ctl.bt.unit(1, k);
         let a = ctl.bt.unit(0, k);
-        pending.targets[k] = (e.name.clone(), if e.hp_max > 0 { e.hp * 100 / e.hp_max } else { 0 }, e.alive);
+        let mys = if !e.alive {
+            String::new()
+        } else if ctl.bt.round() < e.mystery_unlock_round {
+            format!(" · M:R{}", e.mystery_unlock_round)
+        } else if e.mystery_cd > 0 {
+            format!(" · M:CD{}", e.mystery_cd)
+        } else if e.fluxo >= ctl.bt.mystery_cost(1, k) {
+            " · M:pronta".to_string()
+        } else {
+            String::new()
+        };
+        pending.targets[k] = (
+            format!("{}{mys}", e.name),
+            if e.hp_max > 0 { e.hp * 100 / e.hp_max } else { 0 },
+            e.alive,
+        );
         pending.allies[k] = (a.name.clone(), if a.hp_max > 0 { a.hp * 100 / a.hp_max } else { 0 }, a.alive);
     }
     // chase
@@ -2426,6 +2465,15 @@ fn aplicar_evento(
                     format!("{} foi SILENCIADO (sem Skill/Mystery)", bt.unit(*side, *slot).name)
                 }
             };
+        }
+        BattleEvent::Taunted { side, slot, rounds } => {
+            let provocador = bt.unit(1 - *side, *slot);
+            linha = format!(
+                "⚔ Provocação: ataques automáticos do time {} miram {} por {} rodada(s)",
+                if *side == 0 { "inimigo" } else { "seu" },
+                provocador.name,
+                rounds
+            );
         }
         BattleEvent::Skip { side, slot, reason } => {
             linha = match reason {
