@@ -267,6 +267,28 @@ pub(crate) fn plus_after(text: &str, keyword: &str) -> Option<i32> {
     None
 }
 
+/// Primeiro inteiro após a palavra-chave, com ou sem `+` (v0.8 — ex.:
+/// "perdem 5 de velocidade", "+25 de velocidade").
+pub(crate) fn num_after(text: &str, keyword: &str) -> Option<i32> {
+    plus_after(text, keyword).or_else(|| {
+        let idx = text.find(keyword)?;
+        let rest = &text[idx + keyword.len()..];
+        let b = rest.as_bytes();
+        let mut i = 0;
+        while i < b.len() && !b[i].is_ascii_digit() {
+            i += 1;
+        }
+        let start = i;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        if start == i {
+            return None;
+        }
+        rest[start..i].parse().ok()
+    })
+}
+
 impl Formation4v4 {
     /// Monta a batalha: `comp_a`/`comp_b` são 4 índices no roster.
     /// Ordem padrão [0,1,2,3] (frente-esq, frente-dir, trás-esq, trás-dir).

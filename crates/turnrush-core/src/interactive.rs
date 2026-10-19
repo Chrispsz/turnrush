@@ -258,6 +258,9 @@ pub enum BattleEvent {
     StateApplied { side: usize, slot: usize, state: ComboState },
     /// Atordoado/Silenciado por interrupt.
     Debuffed { side: usize, slot: usize, kind: crate::data::InterruptKind },
+    /// v0.8: Provocação — ataques automáticos do lado `side` miram `slot`
+    /// por `rounds` rodadas (efeito visível dos dois lados).
+    Taunted { side: usize, slot: usize, rounds: u32 },
     /// Ação pulada (morta/atordoada) — visível, nunca silenciosa.
     Skip { side: usize, slot: usize, reason: SkipReason },
     /// Janela de perseguição aberta para o time `side`.
@@ -322,6 +325,16 @@ struct Tier {
     pierce_def_pct: i32,
     pierce_shield_pct: i32,
     reflect_pct: i32,
+    /// v0.8 (mystery só): limpa Veneno/Queimadura do alvo da cura.
+    cleanse: bool,
+    /// v0.8 (mystery só): regeneração % do HP máx por rodada + duração.
+    regen_pct: i32,
+    regen_turns: u32,
+    /// v0.8 (mystery só): Provocação — ataques automáticos inimigos miram
+    /// o executor por 1 rodada completa (resto da atual + a seguinte).
+    taunt: bool,
+    /// v0.8 (mystery só): Aceleração — +N de SPD efetiva na próxima rodada.
+    accel_next: i32,
 }
 
 impl Tier {
@@ -354,6 +367,20 @@ impl Tier {
         let pierce_shield =
             if low.contains("ignora") && low.contains("escudo") { pct_after(&low, "escudo").unwrap_or(0) } else { 0 };
         let dot = low.contains("queimadura") || low.contains("veneno");
+        // v0.8 — utilidades assinatura (mystery = forma final; skill = base
+        // sem estado, princípio v0.7 mantido):
+        let cleanse = low.contains("dissipa");
+        let regen_pct = if low.contains("regenera") { pct_after(&low, "regenera").unwrap_or(0) } else { 0 };
+        let regen_turns = if regen_pct > 0 {
+            low.split("durante ")
+                .nth(1)
+                .and_then(|r| r.split_whitespace().next().and_then(|w| w.parse::<u32>().ok()))
+                .unwrap_or(2)
+        } else {
+            0
+        };
+        let taunt = low.contains("provoca");
+        let accel_next = if low.contains("aceleração") { crate::formation::num_after(&low, "aceleração").unwrap_or(25) } else { 0 };
         let multi = matches!(m.targets, TargetSpec::EnemiesFront | TargetSpec::EnemiesAll | TargetSpec::Random2);
         let skill_t = skill_targets.unwrap_or(m.targets);
         let skill_multi = matches!(skill_t, TargetSpec::EnemiesFront | TargetSpec::EnemiesAll | TargetSpec::Random2);
@@ -370,6 +397,11 @@ impl Tier {
             pierce_def_pct: 0,
             pierce_shield_pct: 0,
             reflect_pct: reflect,
+            cleanse: false,
+            regen_pct: 0,
+            regen_turns: 0,
+            taunt: false,
+            accel_next: 0,
         };
         let mystery = Tier {
             name: m.name.clone(),
@@ -383,6 +415,11 @@ impl Tier {
             pierce_def_pct: pierce_def,
             pierce_shield_pct: pierce_shield,
             reflect_pct: reflect,
+            cleanse,
+            regen_pct,
+            regen_turns,
+            taunt,
+            accel_next,
         };
         (skill, mystery)
     }
@@ -438,6 +475,7 @@ impl Default for SideEdge {
 }
 
 /// Unidade do modo interativo.
+#[derive(Clone)]
 struct IU {
     name: String,
     role: Role,
@@ -456,12 +494,30 @@ struct IU {
     dot_dmg: i32,
     dot_turns: u8,
     dmg_reduction_permille: i32,
+    /// v0.8: redução só vale na linha de frente (slots 0-1).
+    front_only_reduction: bool,
     reflect_permille: i32,
     bonus_vs_dot: i32,
     team_bonus_vs: Vec<(ComboState, i32)>,
     round_end_heal_pct: i32,
+    /// v0.8: cura de fim de rodada em TODOS os aliados (% do HP máx próprio).
+    team_eor_heal_pct: i32,
     round_start_fluxo: i32,
     dot_on_hit: bool,
+    /// v0.8 (Orson): inimigos que o acertam com padrão pegam Queimadura 1 rodada.
+    on_hit_burn: bool,
+    /// v0.8 (Volta): inimigos arremessados perdem N de SPD na próxima rodada.
+    launch_slow: i32,
+    /// v0.8 (Ivo): aura — inimigos sob DoT causam -N‰ de dano (0 = inativa).
+    dot_weak_permille: i32,
+    /// v0.8 (Aro): escudo cresce N% do ATK por fim de rodada enquanto existir.
+    shield_growth_pct: i32,
+    /// v0.8 runtime: SPD efetiva alterada para a PRÓXIMA ordem de rodada.
+    spd_debuff_next: i32,
+    spd_accel_next: i32,
+    /// v0.8 runtime: regeneração ativa (% do HP máx por fim de rodada).
+    regen_pct: i32,
+    regen_turns: u32,
     chase_dmg_bonus_permille: i32,
     chase_fluxo_bonus: i32,
     chased: bool,
@@ -496,6 +552,9 @@ struct ISide {
     acted: [bool; 4],
     /// Bônus da primeira perseguição do time já usado nesta rodada.
     first_chase_used: bool,
+    /// v0.8 (Provocação de Orson): slot do provocador + rodadas restantes.
+    taunt_target: Option<usize>,
+    taunt_rounds_left: u32,
 }
 
 impl ISide {
@@ -592,7 +651,7 @@ impl InteractiveBattle {
                     u
                 })
                 .collect();
-            ISide { units, order: Vec::new(), acted: [false; 4], first_chase_used: false }
+            ISide { units, order: Vec::new(), acted: [false; 4], first_chase_used: false, taunt_target: None, taunt_rounds_left: 0 }
         };
         let sides = [mk(comp_a, &edge_a, &mut unmodeled), mk(comp_b, &edge_b, &mut unmodeled)];
         InteractiveBattle {
@@ -658,6 +717,8 @@ impl InteractiveBattle {
         if let Some(p) = pct_after(&low, "dano recebido") {
             dmg_reduction_permille = p * 10;
         }
+        // v0.8: a condição 'linha de frente' AGORA é modelada (slots 0-1).
+        let front_only_reduction = low.contains("linha de frente");
         let mut reflect_permille = 0;
         if let Some(p) = pct_after(&low, "reflete") {
             reflect_permille = p * 10;
@@ -666,11 +727,35 @@ impl InteractiveBattle {
             reflect_permille = reflect_permille.max(p * 10);
         }
         let mut round_end_heal_pct = 0;
-        if low.contains("fim da rodada") && low.contains("cura") {
+        if low.contains("fim da rodada") && low.contains("cura") && !low.contains("todos os aliados") {
             if let Some(p) = pct_after(&low, "cura") {
                 round_end_heal_pct = p;
             }
         }
+        // v0.8 (Yara): cura de fim de rodada em TODOS os aliados (% do HP máx).
+        let mut team_eor_heal_pct = 0;
+        if low.contains("fim da rodada") && low.contains("todos os aliados") {
+            if let Some(p) = pct_after(&low, "curam").or_else(|| pct_after(&low, "cura")) {
+                team_eor_heal_pct = p;
+            }
+        }
+        // v0.8 (Orson novo): inimigos que o acertam com padrão pegam Queimadura.
+        let on_hit_burn = low.contains("acertam") && low.contains("queimadura");
+        // v0.8 (Volta): arremessados perdem N de SPD na próxima rodada.
+        let mut launch_slow = 0;
+        if low.contains("perdem") && low.contains("velocidade") {
+            launch_slow = crate::formation::num_after(&low, "perdem").unwrap_or(0);
+        }
+        // v0.8 (Ivo): aura — inimigos sob DoT causam -N% de dano.
+        let dot_weak_permille =
+            if low.contains("sob veneno") || low.contains("causam -") { pct_after(&low, "causam -").unwrap_or(10) * 10 } else { 0 };
+        // v0.8 (Aro): escudo crescente vem do TEXTO da mystery (é o mecanismo dela).
+        let mlow = c.mystery.effect.to_lowercase();
+        let shield_growth_pct = if mlow.contains("ao fim de cada rodada") && mlow.contains("ganha") {
+            plus_after(&mlow, "ganha").unwrap_or(0)
+        } else {
+            0
+        };
         let mut round_start_fluxo = 0;
         if low.contains("início da rodada") && low.contains("chakra") {
             // "+N de chakra" pode vir antes ou depois da palavra — aceitar ambos
@@ -702,16 +787,11 @@ impl InteractiveBattle {
             c.speed
         };
         // Honestidade: o que ficou de fora, dito em voz alta
-        for (kw, nota) in [
-            ("linha de frente", "condição 'linha de frente' tratada como sempre ativa"),
-            ("velocidade até o fim", "debuff de velocidade temporário não modelado"),
-            ("causam -", "debuff condicional de dano inimigo não modelado"),
-            ("ao fim de cada rodada enquanto existir", "escudo crescente por rodada não modelado"),
-            ("age primeiro na rodada de abertura", "prioridade de abertura não modelada (SPD já cobre)"),
-        ] {
-            if low.contains(kw) {
-                unmodeled.push(format!("{}: {}", c.name, nota));
-            }
+        // (v0.8: linha de frente, lentidão, aura -dano e escudo crescente
+        // PASSARAM a ser modelados — saíram da lista)
+        let kw = "age primeiro na rodada de abertura";
+        if low.contains(kw) {
+            unmodeled.push(format!("{}: prioridade de abertura não modelada (SPD já cobre)", c.name));
         }
 
         // Escala (inimigo/boss) e bônus de cartas, tudo inteiro:
@@ -742,12 +822,22 @@ impl InteractiveBattle {
                 dot_dmg: 0,
                 dot_turns: 0,
                 dmg_reduction_permille,
+                front_only_reduction,
                 reflect_permille,
                 bonus_vs_dot,
                 team_bonus_vs,
                 round_end_heal_pct,
+                team_eor_heal_pct,
                 round_start_fluxo,
                 dot_on_hit,
+                on_hit_burn,
+                launch_slow,
+                dot_weak_permille,
+                shield_growth_pct,
+                spd_debuff_next: 0,
+                spd_accel_next: 0,
+                regen_pct: 0,
+                regen_turns: 0,
                 chase_dmg_bonus_permille,
                 chase_fluxo_bonus,
                 chased: false,
@@ -1432,9 +1522,23 @@ impl InteractiveBattle {
             self.tactic_offer = Some([a, b]);
         }
 
-        // Timeline: SPD desc dentro do lado, intercalada A1→B1→A2→B2…
+        // Timeline: SPD efetiva desc dentro do lado (aceleração/lentidão v0.8
+        // valem para ESTA rodada e são consumidas), intercalada A1→B1→A2→B2…
         self.sides[0].order = self.spd_order(0);
         self.sides[1].order = self.spd_order(1);
+        for si in 0..2 {
+            for u in self.sides[si].units.iter_mut() {
+                u.spd_accel_next = 0;
+                u.spd_debuff_next = 0;
+            }
+            // Provocação: decai na abertura (cast na rodada N cobre N e N+1).
+            if self.sides[si].taunt_rounds_left > 0 {
+                self.sides[si].taunt_rounds_left -= 1;
+                if self.sides[si].taunt_rounds_left == 0 {
+                    self.sides[si].taunt_target = None;
+                }
+            }
+        }
         self.timeline.clear();
         let (first, second) = (self.starter, 1 - self.starter);
         let len = self.sides[0].order.len().max(self.sides[1].order.len());
@@ -1449,10 +1553,16 @@ impl InteractiveBattle {
         self.cursor = 0;
     }
 
+    /// SPD efetiva para a ordem: base + aceleração − lentidão (v0.8).
+    fn eff_spd(&self, side: usize, slot: usize) -> i32 {
+        let u = &self.sides[side].units[slot];
+        u.spd + u.spd_accel_next - u.spd_debuff_next
+    }
+
     fn spd_order(&self, side: usize) -> Vec<usize> {
         let mut slots: Vec<usize> = self.sides[side].living_slots();
         slots.sort_by(|&a, &b| {
-            self.sides[side].units[b].spd.cmp(&self.sides[side].units[a].spd).then(a.cmp(&b))
+            self.eff_spd(side, b).cmp(&self.eff_spd(side, a)).then(a.cmp(&b))
         });
         slots
     }
@@ -1498,7 +1608,38 @@ impl InteractiveBattle {
     }
 
     fn close_round(&mut self) {
-        // Fim de rodada: curas de passiva (o aliado com menos HP%).
+        // Fim de rodada: regeneração ativa (v0.8, Yara).
+        for si in 0..2 {
+            for slot in 0..4 {
+                let u = &mut self.sides[si].units[slot];
+                if u.alive && u.regen_turns > 0 && u.regen_pct > 0 {
+                    let heal = u.hp_max * u.regen_pct / 100;
+                    u.hp = (u.hp + heal).min(u.hp_max);
+                    u.regen_turns -= 1;
+                    if u.regen_turns == 0 {
+                        u.regen_pct = 0;
+                    }
+                    self.outbox.push(BattleEvent::Heal { side: si, slot, amount: heal });
+                }
+            }
+        }
+        // Fim de rodada: escudo crescente (v0.8, Aro) — +N% do ATK enquanto
+        // existir, com teto 2× ATK (antistall, lição v0.2 "Muralha 55/2t").
+        for si in 0..2 {
+            for slot in 0..4 {
+                let u = &mut self.sides[si].units[slot];
+                if u.alive && u.shield > 0 && u.shield_growth_pct > 0 {
+                    let teto = u.atk_eff() * 2;
+                    let novo = (u.shield + u.atk_eff() * u.shield_growth_pct / 100).min(teto);
+                    if novo > u.shield {
+                        self.outbox.push(BattleEvent::Shield { side: si, slot, amount: novo - u.shield });
+                        u.shield = novo;
+                    }
+                }
+            }
+        }
+        // Fim de rodada: curas de passiva — focada (o aliado com menos HP%)
+        // e em área (v0.8, Yara: todos os aliados curam % do HP máx próprio).
         for si in 0..2 {
             let pcts: Vec<i32> =
                 self.sides[si].units.iter().map(|u| if u.alive { u.round_end_heal_pct } else { 0 }).collect();
@@ -1522,6 +1663,21 @@ impl InteractiveBattle {
                     let heal = t.hp_max * p / 100;
                     t.hp = (t.hp + heal).min(t.hp_max);
                     self.outbox.push(BattleEvent::Heal { side: si, slot: best, amount: heal });
+                }
+            }
+            // v0.8: cura em área (todos os aliados, % do HP máx de cada um)
+            let area_pct = self.sides[si].units.iter().map(|u| if u.alive { u.team_eor_heal_pct } else { 0 }).max().unwrap_or(0);
+            if area_pct > 0 {
+                for slot in 0..4 {
+                    let t = &mut self.sides[si].units[slot];
+                    if t.alive {
+                        let falta = (t.hp_max - t.hp).max(0);
+                        if falta > 0 {
+                            let heal = (t.hp_max * area_pct / 100).min(falta);
+                            t.hp += heal;
+                            self.outbox.push(BattleEvent::Heal { side: si, slot, amount: heal });
+                        }
+                    }
                 }
             }
         }
@@ -1570,8 +1726,20 @@ impl InteractiveBattle {
     /// U1 (feedback 2026-10-18): o padrão mira o slot ESPELHADO (1↔1,
     /// 2↔2…); se o espelhado caiu, ataca o primeiro vivo da frente para
     /// trás — sem seleção manual na UI (alvo automático).
+    /// v0.8 (Provocação): com taunt ativo no lado inimigo, o ALVO AUTOMÁTICO
+    /// é desviado para o provocador (alvo explícito/manual NÃO é forçado —
+    /// decidir continua sendo do jogador).
     fn standard_target(&self, side: usize, slot: usize, target: Option<usize>) -> Option<usize> {
         let enemy = 1 - side;
+        if target.is_none() {
+            // Provocação: o taunt vive no lado ATACANTE (ataques DELE são
+            // desviados) — setado pela mystery do provocador adversário.
+            if let Some(t) = self.sides[side].taunt_target {
+                if self.sides[side].units[t].alive {
+                    return Some(t);
+                }
+            }
+        }
         if let Some(t) = target {
             if t < 4 && self.sides[enemy].units[t].alive {
                 return Some(t);
@@ -1588,7 +1756,8 @@ impl InteractiveBattle {
         let u = &self.sides[side].units[slot];
         let (tdef, t_red, t_dot) = {
             let t = &self.sides[1 - side].units[tslot];
-            (t.def, t.dmg_reduction_permille, t.dot_turns > 0)
+            let red = if t.front_only_reduction && tslot >= 2 { 0 } else { t.dmg_reduction_permille };
+            (t.def, red, t.dot_turns > 0)
         };
         let mut dmg = pace(crate::combat::damage_after_def(u.atk_eff(), u.standard.damage_pct, tdef));
         if t_dot && u.bonus_vs_dot > 0 {
@@ -1597,6 +1766,21 @@ impl InteractiveBattle {
         if u.standard.applies_state != ComboState::None {
             if let Some((_, p)) = u.team_bonus_vs.iter().find(|(st, _)| *st == u.standard.applies_state) {
                 dmg = dmg * (PER_MILLE + p) / PER_MILLE;
+            }
+        }
+        // v0.8 (aura do Ivo): atacante sob DoT golpeia 10% mais fraco.
+        if u.dot_turns > 0 {
+            let aura = self.sides[1 - side].units.iter().any(|t| t.alive && t.dot_weak_permille > 0);
+            if aura {
+                let p = self
+                    .sides[1 - side]
+                    .units
+                    .iter()
+                    .filter(|t| t.alive && t.dot_weak_permille > 0)
+                    .map(|t| t.dot_weak_permille)
+                    .max()
+                    .unwrap_or(0);
+                dmg = dmg * (PER_MILLE - p) / PER_MILLE;
             }
         }
         if t_red > 0 {
@@ -1648,7 +1832,8 @@ impl InteractiveBattle {
     fn tier_damage(&self, side: usize, slot: usize, tier: &Tier, tslot: usize) -> i32 {
         let (tdef, t_red) = {
             let t = &self.sides[1 - side].units[tslot];
-            (t.def, t.dmg_reduction_permille)
+            let red = if t.front_only_reduction && tslot >= 2 { 0 } else { t.dmg_reduction_permille };
+            (t.def, red)
         };
         let eff_def = tdef * (100 - tier.pierce_def_pct) / 100;
         let mut dmg = pace(crate::combat::damage_after_def(
@@ -1663,6 +1848,20 @@ impl InteractiveBattle {
                 .find(|(st, _)| *st == tier.applies)
             {
                 dmg = dmg * (PER_MILLE + p) / PER_MILLE;
+            }
+        }
+        // v0.8 (aura do Ivo): atacante sob DoT golpeia mais fraco.
+        if self.sides[side].units[slot].dot_turns > 0 {
+            let p = self
+                .sides[1 - side]
+                .units
+                .iter()
+                .filter(|t| t.alive && t.dot_weak_permille > 0)
+                .map(|t| t.dot_weak_permille)
+                .max()
+                .unwrap_or(0);
+            if p > 0 {
+                dmg = dmg * (PER_MILLE - p) / PER_MILLE;
             }
         }
         if t_red > 0 {
@@ -1722,7 +1921,23 @@ impl InteractiveBattle {
             }
         }
         self.deal_damage(1 - side, tslot, dmg, 0);
+        // v0.8 (Orson): Muro Incandescente — quem acerta o padrão em Orson
+        // pega Queimadura por 1 rodada (30% do ATK do defensor). O tick é
+        // visível no início da próxima rodada (mesma fidelidade do veneno).
+        if self.sides[1 - side].units[tslot].on_hit_burn && self.sides[side].units[slot].alive {
+            let burn = self.sides[1 - side].units[tslot].atk_eff() * DOT_ATK_PCT / 100;
+            let a = &mut self.sides[side].units[slot];
+            if a.dot_turns == 0 || burn >= a.dot_dmg {
+                a.dot_dmg = burn;
+            }
+            a.dot_turns = 1;
+        }
         if applies != ComboState::None && self.sides[1 - side].units[tslot].alive {
+            // v0.8 (Volta): lançados perdem SPD na PRÓXIMA ordem de rodada.
+            let slow = self.sides[side].units[slot].launch_slow;
+            if applies == ComboState::Launch && slow > 0 {
+                self.sides[1 - side].units[tslot].spd_debuff_next = slow;
+            }
             self.chase_queue.push((1 - side, tslot, applies));
             self.outbox.push(BattleEvent::StateApplied { side: 1 - side, slot: tslot, state: applies });
         }
@@ -1784,6 +1999,29 @@ impl InteractiveBattle {
                     self.sides[side].units[tslot].shield += shield;
                     self.outbox.push(BattleEvent::Shield { side, slot: tslot, amount: shield });
                 }
+                // v0.8 — utilidades assinatura da MYSTERY (forma final):
+                if tier.cleanse {
+                    let t = &mut self.sides[side].units[tslot];
+                    if t.dot_turns > 0 {
+                        t.dot_turns = 0;
+                        t.dot_dmg = 0;
+                        self.outbox.push(BattleEvent::StateApplied { side, slot: tslot, state: ComboState::None });
+                    }
+                }
+                if tier.regen_pct > 0 {
+                    let t = &mut self.sides[side].units[tslot];
+                    t.regen_pct = tier.regen_pct;
+                    t.regen_turns = tier.regen_turns.max(1);
+                }
+                if tier.accel_next > 0 {
+                    self.sides[side].units[tslot].spd_accel_next = tier.accel_next;
+                }
+                if tier.taunt {
+                    let enemy = 1 - side;
+                    self.sides[enemy].taunt_target = Some(slot);
+                    self.sides[enemy].taunt_rounds_left = 2;
+                    self.outbox.push(BattleEvent::Taunted { side: enemy, slot, rounds: 2 });
+                }
                 if tier.reflect_pct > 0 {
                     self.sides[side].units[tslot].reflect_permille = tier.reflect_pct * 10;
                 }
@@ -1810,6 +2048,11 @@ impl InteractiveBattle {
                         }
                     }
                     if tier.applies != ComboState::None && self.sides[enemy].units[tslot].alive {
+                        // v0.8 (Volta): lançados perdem SPD na próxima rodada.
+                        let slow = self.sides[side].units[slot].launch_slow;
+                        if tier.applies == ComboState::Launch && slow > 0 {
+                            self.sides[enemy].units[tslot].spd_debuff_next = slow;
+                        }
                         queue.push((enemy, tslot, tier.applies));
                         self.outbox.push(BattleEvent::StateApplied { side: enemy, slot: tslot, state: tier.applies });
                     }
@@ -2621,13 +2864,223 @@ mod tests {
 
     #[test]
     fn unmodeled_fica_visivel() {
+        // Contrato v0.8: o roster REAL do jogo não tem mais passivas não
+        // modeladas — toda assinatura mecânica tem efeito na engine.
         let r = roster();
-        let idx_ivo = r.characters.iter().position(|c| c.id == "ivo").expect("ivo no roster");
-        let bt = InteractiveBattle::new(&r, [idx_ivo, 0, 1, 2], [3, 4, 5, 6], 1);
-        assert!(
-            !bt.unmodeled().is_empty(),
-            "passiva condicional não modelada deve aparecer na lista honesta"
-        );
+        let bt = InteractiveBattle::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 1);
+        assert!(bt.unmodeled().is_empty(), "roster v0.8 deve estar 100% modelado: {:?}", bt.unmodeled());
+        // E quando algo fica de fora, a honestidade fala alto.
+        let src = r#"{"version":2,"characters":[
+            {"id":"x1","name":"X1","faction":"ember","role":"striker","hp":900,"attack":100,"defense":40,"speed":50,
+             "mystery":{"name":"M","chakra":20,"cooldown":3,"targets":"enemies_front","damage_pct":100,"applies_state":"none","effect":""},
+             "standard":{"name":"S","damage_pct":70,"applies_state":"none"},
+             "chase":{"name":"C","trigger":"launch","damage_pct":30,"applies_state":"none","max_per_round":1},
+             "passive":{"name":"P","effect":"Age primeiro na rodada de abertura."}}
+        ]}"#;
+        let r2 = Roster::from_json(src).expect("mock");
+        let bt2 = InteractiveBattle::new(&r2, [0, 0, 0, 0], [0, 0, 0, 0], 1);
+        assert!(!bt2.unmodeled().is_empty(), "passiva não modelada deve aparecer na lista honesta");
+    }
+
+    // ── v0.8: assinaturas mecânicas modeladas ───────────────────────────────
+
+    /// Provocação (Orson): ataques automáticos inimigos são desviados para
+    /// o provocador; alvo EXPLÍCITO não é forçado (liberdade do jogador).
+    #[test]
+    fn provocacao_redireciona_apenas_o_automatico() {
+        let r = roster();
+        let idx_orson = r.characters.iter().position(|c| c.id == "orson").expect("orson");
+        let mut bt = InteractiveBattle::new(&r, [idx_orson, 1, 0, 3], [4, 5, 6, 7], 7);
+        bt.sides[0].units[0].fluxo = 100;
+        bt.round = 2;
+        forcar_vez(&mut bt, 0, 0);
+        let evs = bt
+            .execute_action(ChosenAction::Act { kind: ActionKind::Mystery, target: None })
+            .expect("mystery com provocação");
+        assert!(evs.iter().any(|e| matches!(e, BattleEvent::Taunted { side: 1, slot: 0, rounds: 2 })));
+        assert_eq!(bt.sides[1].taunt_target, Some(0), "provocador registrado");
+        // agora é a vez de um inimigo: o padrão AUTOMÁTICO cai em Orson
+        forcar_vez(&mut bt, 1, 1);
+        let pv = bt
+            .preview_action(1, 1, ChosenAction::Act { kind: ActionKind::Standard, target: None })
+            .expect("prévia do inimigo");
+        assert_eq!(pv.targets, vec![(0, 0)], "auto desviado para o provocador");
+        // alvo explícito NÃO é desviado
+        let pv2 = bt
+            .preview_action(1, 1, ChosenAction::Act { kind: ActionKind::Standard, target: Some(1) })
+            .expect("prévia com alvo");
+        assert_eq!(pv2.targets, vec![(0, 1)], "alvo manual respeitado");
+    }
+
+    /// Escudo crescente (Aro): +25% do ATK por fim de rodada enquanto
+    /// existir, com teto 2× ATK (antistall).
+    #[test]
+    fn escudo_crescente_do_aro_com_teto() {
+        let r = roster();
+        let idx_aro = r.characters.iter().position(|c| c.id == "aro").expect("aro");
+        let mut bt = InteractiveBattle::new(&r, [idx_aro, 1, 0, 3], [4, 5, 6, 7], 7);
+        bt.sides[0].units[0].fluxo = 100;
+        bt.round = 2;
+        forcar_vez(&mut bt, 0, 0);
+        let _ = bt.execute_action(ChosenAction::Act { kind: ActionKind::Mystery, target: None }).expect("mystery");
+        let atk = bt.sides[0].units[0].atk_eff();
+        let inicial = bt.sides[0].units[0].shield;
+        assert!(inicial >= atk, "escudo self ≥ 100% do ATK");
+        // força 2 fechamentos de rodada
+        bt.round_active = false;
+        bt.close_round();
+        bt.round_active = false;
+        bt.close_round();
+        let depois = bt.sides[0].units[0].shield;
+        assert!(depois > inicial, "escudo cresceu ({inicial} → {depois})");
+        assert!(depois <= atk * 2, "teto antistall 2× ATK ({depois} ≤ {})", atk * 2);
+    }
+
+    /// Carga Estática (Volta): inimigos arremessados perdem 5 de SPD na
+    /// ordem da PRÓXIMA rodada.
+    #[test]
+    fn lentidao_da_volta_demove_a_ordem() {
+        let r = roster();
+        let idx_volta = r.characters.iter().position(|c| c.id == "volta").expect("volta");
+        let mut bt = InteractiveBattle::new(&r, [idx_volta, 1, 0, 3], [4, 5, 6, 7], 7);
+        bt.sides[0].units[0].fluxo = 100;
+        bt.round = 2;
+        forcar_vez(&mut bt, 0, 0);
+        let _ = bt.execute_action(ChosenAction::Act { kind: ActionKind::Mystery, target: None }).expect("mystery AoE");
+        let lentos: Vec<i32> = (0..4).map(|s| bt.sides[1].units[s].spd_debuff_next).collect();
+        assert!(lentos.iter().all(|&d| d == 5), "todos os lançados com -5 de SPD: {lentos:?}");
+    }
+
+    /// Corda-Fina (Ivo): atacante sob DoT causa 10% menos dano ao time dele.
+    #[test]
+    fn aura_do_ivo_enfraquece_atacante_com_dot() {
+        let r = roster();
+        let idx_ivo = r.characters.iter().position(|c| c.id == "ivo").expect("ivo");
+        let mut bt = InteractiveBattle::new(&r, [idx_ivo, 1, 2, 3], [4, 5, 6, 7], 7);
+        forcar_vez(&mut bt, 1, 1);
+        let dano_limpo = bt.standard_damage(1, 1, 0);
+        // atacante com veneno ativo
+        bt.sides[1].units[1].dot_turns = 2;
+        bt.sides[1].units[1].dot_dmg = 50;
+        let dano_dot = bt.standard_damage(1, 1, 0);
+        assert_eq!(dano_dot * 10, dano_limpo * 9, "−10% com DoT ativo ({dano_limpo} → {dano_dot})");
+    }
+
+    /// Aceleração (Alísio): alvo da mystery ganha +25 de SPD na ordem da
+    /// próxima rodada.
+    #[test]
+    fn aceleracao_do_alisio_antecipa_a_ordem() {
+        let r = roster();
+        let idx_alisio = r.characters.iter().position(|c| c.id == "alisio").expect("alisio");
+        let mut bt = InteractiveBattle::new(&r, [idx_alisio, 1, 0, 3], [4, 5, 6, 7], 7);
+        bt.sides[0].units[0].fluxo = 100;
+        bt.sides[0].units[1].hp -= 150; // alvo mais ferido = determinístico
+        bt.round = 2;
+        forcar_vez(&mut bt, 0, 0);
+        let _ = bt.execute_action(ChosenAction::Act { kind: ActionKind::Mystery, target: None }).expect("mystery");
+        assert_eq!(bt.sides[0].units[0].spd_accel_next, 0, "executor não se acelera");
+        assert_eq!(bt.sides[0].units[1].spd_accel_next, 25, "alvo mais ferido acelerado");
+        let acelerados: Vec<i32> = (0..4).map(|s| bt.sides[0].units[s].spd_accel_next).collect();
+        assert_eq!(acelerados.iter().filter(|&&a| a == 25).count(), 1, "um alvo acelerado: {acelerados:?}");
+    }
+
+    /// Dissipação (Mel): a mystery limpa Veneno/Queimadura do alvo curado.
+    #[test]
+    fn dissipacao_da_mel_limpa_dot() {
+        let r = roster();
+        let idx_mel = r.characters.iter().position(|c| c.id == "mel").expect("mel");
+        let mut bt = InteractiveBattle::new(&r, [idx_mel, 1, 0, 3], [4, 5, 6, 7], 7);
+        bt.sides[0].units[0].fluxo = 100;
+        bt.sides[0].units[0].dot_turns = 2;
+        bt.sides[0].units[0].dot_dmg = 40;
+        bt.round = 2;
+        forcar_vez(&mut bt, 0, 0);
+        let _ = bt.execute_action(ChosenAction::Act { kind: ActionKind::Mystery, target: None }).expect("mystery");
+        assert_eq!(bt.sides[0].units[0].dot_turns, 0, "veneno dissipado");
+    }
+
+    /// Regeneração (Yara): 2 ticks de 6% do HP máx nos fechamentos de rodada.
+    #[test]
+    fn regeneracao_da_yara_faz_dois_ticks() {
+        let r = roster();
+        let idx_yara = r.characters.iter().position(|c| c.id == "yara").expect("yara");
+        let mut bt = InteractiveBattle::new(&r, [idx_yara, 1, 0, 3], [4, 5, 6, 7], 7);
+        bt.sides[0].units[0].fluxo = 100;
+        bt.sides[0].units[0].hp = bt.sides[0].units[0].hp_max / 2;
+        bt.round = 2;
+        forcar_vez(&mut bt, 0, 0);
+        let _ = bt.execute_action(ChosenAction::Act { kind: ActionKind::Mystery, target: None }).expect("mystery");
+        assert_eq!(bt.sides[0].units[0].regen_pct, 6);
+        assert_eq!(bt.sides[0].units[0].regen_turns, 2);
+        let hp1 = bt.sides[0].units[0].hp;
+        bt.round_active = false;
+        bt.close_round();
+        let tick1 = bt.sides[0].units[0].hp - hp1;
+        // regen 6% + a cura de área própria da Yara (2%) no mesmo fechamento
+        assert_eq!(tick1, bt.sides[0].units[0].hp_max * 8 / 100, "tick = 6% regen + 2% área");
+        bt.round_active = false;
+        bt.close_round();
+        assert_eq!(bt.sides[0].units[0].regen_turns, 0, "expirou após 2 ticks");
+    }
+
+    /// Curas de fim de rodada distintas: Amara foca o mais ferido (5%);
+    /// Yara cura TODOS (2% do próprio HP máx).
+    #[test]
+    fn curas_fim_de_rodada_amara_foca_yara_esparrama() {
+        let r = roster();
+        let idx_amara = r.characters.iter().position(|c| c.id == "amara").expect("amara");
+        let mut bt = InteractiveBattle::new(&r, [idx_amara, 1, 0, 3], [4, 5, 6, 7], 7);
+        // slot 1 (Orson) fica como alvo mais ferido; slot 3 (Nimbo) cheio
+        bt.sides[0].units[1].hp = bt.sides[0].units[1].hp_max / 2;
+        let hp_cheio = bt.sides[0].units[3].hp;
+        bt.round_active = false;
+        bt.close_round();
+        let orson = &bt.sides[0].units[1];
+        assert_eq!(orson.hp, orson.hp_max / 2 + orson.hp_max * 5 / 100, "Amara cura o MAIS ferido com 5%");
+        assert_eq!(bt.sides[0].units[3].hp, hp_cheio, "cheio não recebe nada");
+
+        let idx_yara = r.characters.iter().position(|c| c.id == "yara").expect("yara");
+        let mut bt2 = InteractiveBattle::new(&r, [idx_yara, 1, 0, 3], [4, 5, 6, 7], 7);
+        bt2.sides[0].units[1].hp = bt2.sides[0].units[1].hp_max / 2;
+        bt2.sides[0].units[3].hp -= 30;
+        bt2.round_active = false;
+        bt2.close_round();
+        let orson2 = &bt2.sides[0].units[1];
+        assert_eq!(orson2.hp, orson2.hp_max / 2 + orson2.hp_max * 2 / 100, "Yara dá 2% para o ferido");
+        let nimbo2 = &bt2.sides[0].units[3];
+        assert_eq!(nimbo2.hp, nimbo2.hp_max - 30 + nimbo2.hp_max * 2 / 100, "…e para o levemente ferido TAMBÉM");
+    }
+
+    /// Muro Incandescente (Orson): quem bate com padrão pega Queimadura 1 rodada.
+    #[test]
+    fn muro_de_brasa_do_orson_queima_o_atacante() {
+        let r = roster();
+        let idx_orson = r.characters.iter().position(|c| c.id == "orson").expect("orson");
+        let mut bt = InteractiveBattle::new(&r, [idx_orson, 1, 2, 3], [4, 5, 6, 7], 7);
+        forcar_vez(&mut bt, 1, 1);
+        let _ = bt.execute_action(ChosenAction::Act { kind: ActionKind::Standard, target: None }).expect("padrão em Orson");
+        assert_eq!(bt.sides[1].units[1].dot_turns, 1, "atacante queimado por 1 rodada");
+        assert!(bt.sides[1].units[1].dot_dmg > 0, "tick do burn = 30% do ATK de Orson");
+    }
+
+    /// Redução "na linha de frente" (Dalva): vale em slots 0-1, não em 2-3.
+    #[test]
+    fn reducao_da_dalva_so_na_frente() {
+        let r = roster();
+        let idx_dalva = r.characters.iter().position(|c| c.id == "dalva").expect("dalva");
+        let mut bt = InteractiveBattle::new(&r, [idx_dalva, 1, 2, 3], [4, 5, 6, 7], 7);
+        // frente com a passiva reduz; fundo com a MESMA passiva não reduz
+        bt.sides[0].units[0].dmg_reduction_permille = 150;
+        bt.sides[0].units[0].front_only_reduction = true;
+        let alvo_fundo = bt.sides[0].units[2].clone();
+        // defensor hipotético no fundo com a mesma redução
+        let mut fundo = alvo_fundo;
+        fundo.dmg_reduction_permille = 150;
+        fundo.front_only_reduction = true;
+        bt.sides[0].units[2] = fundo;
+        let d_fundo = bt.standard_damage(1, 1, 2);
+        let d_frente = bt.standard_damage(1, 1, 0);
+        assert!(d_fundo > d_frente, "fundo leva mais que a frente com a mesma passiva ({d_fundo} > {d_frente})");
     }
 
     // ── E.2: preview == resultado ────────────────────────────────────────────

@@ -52,11 +52,11 @@
       "mystery": {
         "name": "Escudo de Obsidiana",
         "chakra": 20,
-        "cooldown": 2,
+        "cooldown": 3,
         "targets": "ally_single",
         "damage_pct": 90,
         "applies_state": "none",
-        "effect": "Concede escudo de 90% do ataque ao aliado e provoca os inimigos da frente."
+        "effect": "Concede escudo de 90% do ataque ao aliado e provoca: por 1 rodada, ataques automáticos inimigos miram Orson."
       },
       "standard": {
         "name": "Bastão de Lava",
@@ -72,7 +72,7 @@
       },
       "passive": {
         "name": "Guardião Incandescente",
-        "effect": "-15% de dano recebido enquanto estiver na linha de frente."
+        "effect": "Inimigos que acertam Orson com ataque padrão ficam em Queimadura por 1 rodada (30% do ATK dele)."
       },
       "unlock_schedule": {
         "mystery_round": 3
@@ -385,7 +385,7 @@
       },
       "passive": {
         "name": "Casca Dura",
-        "effect": "-15% de dano recebido; reflete 10% do dano de ataque padrão recebido."
+        "effect": "Casca Dura: reflete 15% do dano de ataque padrão recebido."
       },
       "unlock_schedule": {
         "mystery_round": 3
@@ -423,7 +423,7 @@
       },
       "passive": {
         "name": "Broto Renascido",
-        "effect": "No fim da rodada, cura 5% do HP do aliado com menos HP."
+        "effect": "Broto Renascido: No fim da rodada, todos os aliados curam 2% do HP máximo."
       },
       "unlock_schedule": {
         "mystery_round": 3
@@ -461,7 +461,7 @@
       },
       "passive": {
         "name": "Corda-Fina",
-        "effect": "Inimigos com estado aplicado pela equipe causam -10% de dano."
+        "effect": "Corda-Fina: Inimigos sob Veneno ou Queimadura causam -10% de dano."
       },
       "unlock_schedule": {
         "mystery_round": 3
@@ -503,7 +503,7 @@
       },
       "passive": {
         "name": "Iniciativa Trovejante",
-        "effect": "Age primeiro na rodada de abertura; +10% de velocidade."
+        "effect": "Iniciativa Trovejante: +10% de velocidade."
       },
       "unlock_schedule": {
         "mystery_round": 3
@@ -564,7 +564,7 @@
         "targets": "ally_single",
         "damage_pct": 90,
         "applies_state": "none",
-        "effect": "Cura 90% do ataque e concede Aceleração (o alvo age antes dos inimigos na próxima rodada)."
+        "effect": "Cura 90% do ataque e concede Aceleração: +25 de velocidade na próxima rodada (o alvo age antes do seu oponente)."
       },
       "standard": {
         "name": "Rajada Firme",
@@ -618,7 +618,7 @@
       },
       "passive": {
         "name": "Carga Estática",
-        "effect": "Inimigos Arremessados perdem 5 de velocidade até o fim da rodada."
+        "effect": "Carga Estática: Inimigos Arremessados perdem 5 de velocidade na próxima rodada."
       },
       "unlock_schedule": {
         "mystery_round": 3
