@@ -94,7 +94,8 @@ fn gatilho_rapido_antecipa_e_barateia() {
     let evs = bt
         .execute_action(ChosenAction::Act { kind: ActionKind::Mystery, target: Some(0) })
         .expect("mystery antecipada");
-    assert_eq!(bt.unit(0, 0).fluxo, antes - 45);
+    // v0.9: Ressonância (+5) entra na execução (padrão repete elemento).
+    assert_eq!(bt.unit(0, 0).fluxo, antes + turnrush_core::data::RESONANCE_FLUXO - 45);
     assert!(evs.iter().any(|e| matches!(e, BattleEvent::StateApplied { side: 1, slot: 0, .. })));
 }
 

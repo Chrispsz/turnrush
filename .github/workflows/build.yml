@@ -53,7 +53,7 @@ jobs:
           path: formation-report.json
 
   puzzle-gate:
-    name: Quebra-Cabeça (suíte em cadeia de 9 peças)
+    name: Quebra-Cabeça (suíte em cadeia de 10 peças)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,8 +62,8 @@ jobs:
       - name: Deps de sistema (wayland/x11 para o Bevy)
         run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev
       # Cadeia completa: clippy → dados → determinismo → economia → mira →
-      # passivas → kits → batalha → run → cliente E2E. O balanceamento
-      # (peça 10) já roda nos jobs `balance`/`balance-formation` acima.
+      # passivas → kits → batalha → run → elementos → cliente E2E. O
+      # balanceamento (peça 11) já roda nos jobs `balance`/`balance-formation`.
       - name: puzzle-gate (rápido)
         run: PUZZLE_FAST=1 scripts/puzzle-gate.sh
 

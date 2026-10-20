@@ -4,6 +4,66 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/);
 versões seguem [SemVer](https://semver.org/lang/pt-BR/). O jogo está em
 **fase de mecânica**: arte/sprites/nomes finais são esboços conscientes.
 
+## [0.9.0] — elementos e cadeias de combo: fogo, água, elétrico e pedra
+
+> Pedido: "vamos trabalhar com elementos nos personagens, sendo elétrico,
+> fogo, água, pedra, priorizando os bombos com mesmo elemento, passivas de
+> buff que podem combinar com outro elemento desde que forme uma cadeia de
+> combos… com elemento X tendo fraqueza com elemento Y". Modelagem estilo
+> coleção de criaturas (fraqueza explícita) sobre a arena já existente:
+> tudo continua automático exceto as decisões do jogador.
+
+### Adicionado
+- **4 elementos de combate**: `fogo | agua | eletrico | pedra` (campo
+  `element` no contrato JSON; ausente → deriva do clã: ember→fogo,
+  tide→água, storm→elétrico, verdant→pedra). Todo golpe ofensivo
+  (padrão/Skill/Mystery/chase) carrega o elemento de quem age.
+- **Ciclo de fraquezas** (cada elemento vence EXATAMENTE 1 e perde para
+  EXATAMENTE 1; diagonal neutra): Água>Fogo, Elétrico>Água, Pedra>Elétrico,
+  Fogo>Pedra. Vantagem **×1200‰** de dano por alvo; desvantagem **×800‰**.
+  Matemática inteira (per-mille), determinística — `preview == execução`
+  garantido (mesmos helpers nas duas pontas).
+- **Ressonância elemental** (mesmo elemento do golpe ofensivo anterior do
+  time): **+15% de dano e +5⚡** para quem age — o "bombo de mesmo elemento"
+  e o acelerador que liga elementos à economia de fluxo (teto 100 mantido).
+  Visível na PRÉVIA da ação (nota + fluxo prometido) e no log
+  (`✦ Ressonância elemental de Água: Nereo (+15% de dano)`).
+- **Cadeia elemental** (elemento na progressão do ciclo do golpe anterior —
+  elemento DIFERENTE): **+10% de dano**; atravessa virada de rodada
+  (wrapthrough). Cura/escudo/Interrupt não tocam a cadeia; DoT não é ação.
+- **Passiva de sintonia (Alísio)**: "quando age em cadeia elemental (elemento
+  diferente…), o golpe causa 20% a mais de dano nessa ação" — o protótipo de
+  passiva que combina com OUTRO elemento formando cadeia (+30% no golpe:
+  10% da cadeia + 20% da sintonia). Modelada nos DOIS motores e testada com
+  número exato; NÃO dispara em Ressonância (é bônus de cadeia).
+- **Eventos finos novos**: `ElementalCombo` (elo fechado, com bônus) e
+  `ElementalHit` (vantagem no alvo — só quando ≠ 0; informação simétrica).
+  Cliente: linha no log de batalha + texto flutuante âmbar
+  Ressonância/Cadeia; glifo `[Fg|Ag|El|Pd]` nos cartões de alvo/aliado e no
+  painel da vez.
+- **Peça 9 do quebra-cabeça** (`tests/p09_elements.rs`, 12 testes): ciclo
+  fechado, contrato JSON (explícito/derivado/erro claro), vantagem com
+  matemática exata NOS DOIS motores, Ressonância (dano+fluxo+prévia),
+  Cadeia com sintonia e wrapthrough, sintonia fora da Ressonância, cura
+  neutra, determinismo/simetria com elementos, snapshot expõe elemento.
+  Suíte agora tem **10 peças**; cliente E2E virou Peça 10
+  (`p10_client_e2e.rs`); `puzzle-gate.sh` e CI atualizados.
+- Roster v2 ganha `element` explícito nos 16 personagens (fonte da verdade
+  da deriva por clã; teste contratual garante 4 elementos × 4 papéis).
+
+### Alterado
+- **Economia**: a Ressonância adiciona +5⚡ por golpe de mesmo elemento em
+  sequência — as asserções exatas de banking das peças 3/4/8 foram
+  atualizadas com o novo contrato (o resto da economia intacto:
+  +10/+15, custos 30/60/35, CDs, teto 100, teto passivo +20).
+
+### Balanceamento
+- Gate 1v1: desvio médio **0.119** (≤ 0.15) ✓.
+- Gate 4v4: desvio médio **0.047** (≤ 0.15), espelho 0.506 ([0.42, 0.58]) ✓ —
+  elementos são simétricos (os dois lados têm) e o espelho não se move.
+- Suíte: **112 testes no core** (102 inline + 10 peças = 110 integração) e
+  `--check` verde com eventos elementais no fluxo.
+
 ## [0.8.1] — suíte quebra-cabeça: testes em cadeia que cobrem tudo
 
 > Pedido: "crie um teste completo para testar tudo desse projeto e em

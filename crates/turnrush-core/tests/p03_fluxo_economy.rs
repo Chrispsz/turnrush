@@ -107,7 +107,9 @@ fn skill_custa_trinta_e_entra_no_cd() {
         .any(|l| l.kind == ActionKind::Skill && l.fluxo_cost == SKILL_COST));
     bt.execute_action(ChosenAction::Act { kind: ActionKind::Skill, target: None })
         .expect("skill no banking");
-    assert_eq!(bt.unit(0, 0).fluxo, antes - SKILL_COST);
+    // v0.9: o padrão do time repete elemento no comp sintético → a ação do
+    // executor fecha Ressonância (+5 de fluxo) antes de pagar a Skill.
+    assert_eq!(bt.unit(0, 0).fluxo, antes + turnrush_core::data::RESONANCE_FLUXO - SKILL_COST);
     assert_eq!(bt.unit(0, 0).skill_cd, turnrush_core::interactive::SKILL_CD);
 
     // r3: CD decrementou 2→1 na abertura → ainda bloqueado, erro claro.
@@ -161,7 +163,8 @@ fn mystery_tem_portao_de_rodada_e_custo_sessenta() {
     let evs = b2
         .execute_action(ChosenAction::Act { kind: ActionKind::Mystery, target: Some(0) })
         .expect("mystery no banking");
-    assert_eq!(b2.unit(0, 0).fluxo, antes - MYSTERY_COST);
+    // v0.9: Ressonância (+5) entra na execução (mesmo elemento repetido).
+    assert_eq!(b2.unit(0, 0).fluxo, antes + turnrush_core::data::RESONANCE_FLUXO - MYSTERY_COST);
     assert_eq!(b2.unit(0, 0).mystery_cd, turnrush_core::interactive::MYSTERY_CD);
     assert!(
         evs.iter()

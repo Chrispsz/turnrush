@@ -23,6 +23,28 @@ Cada personagem tem **4 slots**:
 **Empurrão** → **Derrubada** — aliados com chase do gatilho correspondente
 encadeiam golpes (até 12 elos por cadeia, 1 perseguição por unidade/rodada).
 
+**Elementos (v0.9)** — cada personagem TEM um elemento (o do clã, campo
+`element` do contrato; deriva automática se ausente) e TODO golpe ofensivo o
+carrega. Ciclo de fraquezas, cada elemento vence exatamente um e perde para
+exatamente um (a diagonal fica neutra):
+
+| Elemento | Clã | Vence | Perde para |
+|---|---|---|---|
+| **Fogo** | PYREBORN | Pedra | Água |
+| **Água** | DUSKMERE | Fogo | Elétrico |
+| **Elétrico** | SKYREND | Água | Pedra |
+| **Pedra** | THORNVALE | Elétrico | Fogo |
+
+- **Vantagem elemental**: ×1200‰ de dano (e ×800‰ quando desvantagem) —
+  por alvo, visível no log (`⚡ Elétrico vs Água: +20%`).
+- **Ressonância** (mesmo elemento em sequência ofensiva do time): +15% de
+  dano e **+5⚡** para quem age — o acelerador de energia de composições
+  mono-elemento.
+- **Cadeia elemental** (elemento na progressão do ciclo do golpe anterior):
+  +10% de dano — a recompensa de combinar elementos DIFERENTES em cadeia;
+  passivas de sintonia (ex.: Alísio) somam bônus extra AQUI.
+- Cura, escudo e Interrupt não tocam a cadeia; DoT não é ação.
+
 **Fórmula de dano (4v4):** `ATK efetivo × dmg% × 100/(100+DEF)`, tudo em
 inteiros (per-mille) — determinístico em qualquer plataforma. Curas e escudos
 usam % do ATK; escudos absorvem dano antes do HP.
@@ -311,12 +333,14 @@ cadeias com Derrubada no padrão.
 | Mystery | **Brisa Guiadora** | cura 90% do ATK e concede Aceleração (o alvo age antes dos inimigos na próxima rodada) · alvo: aliado mais ferido · chakra 15 · cooldown 2 |
 | Padrão | **Rajada Firme** | 60% de dano · estado: Lançamento |
 | Chase | **Vento de Cauda** | gatilho: Derrubada · 20% · aplica: — · 1×/rodada |
-| Passiva | **Ritmo de Batalha** | A primeira perseguição da equipe por rodada gera +5 de chakra. |
+| Passiva | **Ritmo de Batalha** | A primeira perseguição da equipe por rodada gera +5 de chakra. Quando age em cadeia elemental (elemento diferente do golpe anterior do time, na progressão do ciclo), o golpe dela causa 20% a mais de dano nessa ação. |
 
 > Cura 90% do ataque e concede Aceleração (o alvo age antes dos inimigos na próxima rodada).
 
 **Estilo de jogo:** maestro da iniciativa — cura + Aceleração e economia de
-chakra alimentada por cada perseguição.
+chakra alimentada por cada perseguição; com os elementos (v0.9), é a **passiva
+de sintonia**: acertar a progressão do ciclo com um elemento DIFERENTE rende
++30% de dano naquela ação (10% da cadeia + 20% da sintonia).
 
 ### Volta Cyclone · `volta` · Tactician
 

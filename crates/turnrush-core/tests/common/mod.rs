@@ -58,6 +58,8 @@ pub struct CharSpec {
     pub unlock: Option<usize>,
     pub interrupt: Option<&'static str>,
     pub skill_targets: Option<&'static str>,
+    /// v0.9: elemento explícito (`None` = deriva do clã).
+    pub element: Option<&'static str>,
 }
 
 impl Default for CharSpec {
@@ -87,6 +89,7 @@ impl Default for CharSpec {
             unlock: None,
             interrupt: None,
             skill_targets: None,
+            element: None,
         }
     }
 }
@@ -105,13 +108,17 @@ impl CharSpec {
             Some(t) => format!(r#","skill_targets":"{t}""#),
             None => String::new(),
         };
+        let element = match self.element {
+            Some(e) => format!(r#","element":"{e}""#),
+            None => String::new(),
+        };
         format!(
             r#"{{"id":"{id}","name":"{name}","faction":"{faction}","role":"{role}",
 "hp":{hp},"attack":{attack},"defense":{defense},"speed":{speed},
 "mystery":{{"name":"M-{id}","chakra":{m_chakra},"cooldown":{m_cd},"targets":"{m_targets}","damage_pct":{m_pct},"applies_state":"{m_state}","effect":"{m_effect}"}},
 "standard":{{"name":"P-{id}","damage_pct":{st_pct},"applies_state":"{st_state}"}},
 "chase":{{"name":"C-{id}","trigger":"{chase_trigger}","damage_pct":{chase_pct},"applies_state":"{chase_state}","max_per_round":{chase_max}}},
-"passive":{{"name":"Pass-{id}","effect":"{passive}"}}{unlock}{interrupt}{skill_targets}}}"#,
+"passive":{{"name":"Pass-{id}","effect":"{passive}"}}{unlock}{interrupt}{skill_targets}{element}}}"#,
             id = self.id,
             name = self.name,
             faction = self.faction,

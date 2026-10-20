@@ -14,7 +14,7 @@ Guide for AI agents working in this repo. Read fully before editing. Keep change
 
 ```bash
 cargo test --workspace                                    # all tests must pass
-scripts/puzzle-gate.sh                                    # FULL chained suite (9 pieces + gates)
+scripts/puzzle-gate.sh                                    # FULL chained suite (10 pieces + gates)
 PUZZLE_FAST=1 scripts/puzzle-gate.sh                      # chained suite, skip formation MC gate
 cargo clippy --workspace --all-targets -- -D warnings     # zero-warnings policy
 cargo run -p turnrush-game -- --check                     # smoke: headless battle + event counts
@@ -23,9 +23,9 @@ cargo run -p turnrush-game -- --shot /tmp/shots           # 5 headless screensho
 cargo run -p turnrush-game                                # playable client (menu → draft → battle)
 ```
 
-**Puzzle suite (docs/TESTING.md):** 9 chained integration-test pieces
+**Puzzle suite (docs/TESTING.md):** 10 chained integration-test pieces
 (data → determinism → economy → targeting → passives → kits → battle chain →
-run → client E2E) plus `scripts/puzzle-gate.sh` master runner and the
+run → elements → client E2E) plus `scripts/puzzle-gate.sh` master runner and the
 `puzzle-gate` CI job. Integration tests use ONLY the public engine API —
 if a test needs new API, the UI probably needs it too.
 

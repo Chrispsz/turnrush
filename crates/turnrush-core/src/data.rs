@@ -232,6 +232,115 @@ impl Faction {
     }
 }
 
+/// Elemento de combate (v0.9): fogo, água, elétrico e pedra.
+///
+/// Ciclo de fraquezas (estilo coleção de criaturas): cada elemento vence
+/// EXATAMENTE um e perde para EXATAMENTE um — a diagonal fica neutra:
+///
+/// ```text
+/// Água apaga Fogo · Elétrico conduz pela Água · Pedra isola Elétrico
+/// Fogo vitrifica Pedra      (ciclo: Fogo→Pedra→Elétrico→Água→Fogo)
+/// ```
+///
+/// Vantagem: +20% de dano (×1200‰) · Desvantagem: -20% (×800‰) · Neutro: ×1000‰.
+/// Todo personagem TEM um elemento (deriva do clã quando o JSON não traz
+/// `element`), e todo golpe ofensivo carrega o elemento de quem age —
+/// o que alimenta as cadeias de combo (ressonância/progressão).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Element {
+    Fogo,
+    Agua,
+    Eletrico,
+    Pedra,
+}
+
+impl Element {
+    pub fn parse(s: &str) -> Result<Element, String> {
+        match s {
+            "fogo" => Ok(Element::Fogo),
+            "agua" => Ok(Element::Agua),
+            "eletrico" => Ok(Element::Eletrico),
+            "pedra" => Ok(Element::Pedra),
+            other => Err(format!(
+                "element inválido: \"{other}\" (esperado fogo|agua|eletrico|pedra)"
+            )),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Element::Fogo => "fogo",
+            Element::Agua => "agua",
+            Element::Eletrico => "eletrico",
+            Element::Pedra => "pedra",
+        }
+    }
+
+    /// Rótulo legível (logs/UI).
+    pub fn label(self) -> &'static str {
+        match self {
+            Element::Fogo => "Fogo",
+            Element::Agua => "Água",
+            Element::Eletrico => "Elétrico",
+            Element::Pedra => "Pedra",
+        }
+    }
+
+    /// Glifo de 2 letras para caber em botões/linhas apertadas.
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Element::Fogo => "Fg",
+            Element::Agua => "Ag",
+            Element::Eletrico => "El",
+            Element::Pedra => "Pd",
+        }
+    }
+
+    /// Elemento de combate padrão de um clã.
+    pub fn of_faction(f: Faction) -> Element {
+        match f {
+            Faction::Ember => Element::Fogo,
+            Faction::Tide => Element::Agua,
+            Faction::Storm => Element::Eletrico,
+            Faction::Verdant => Element::Pedra,
+        }
+    }
+
+    /// Próximo elo do ciclo a partir de `self` — ou seja, o elemento que
+    /// `self` VENCE (Fogo→Pedra→Elétrico→Água→Fogo).
+    pub fn cycle_next(self) -> Element {
+        match self {
+            Element::Fogo => Element::Pedra,
+            Element::Pedra => Element::Eletrico,
+            Element::Eletrico => Element::Agua,
+            Element::Agua => Element::Fogo,
+        }
+    }
+
+    /// Modificador de dano (per-mille) de `att` batendo em `def`:
+    /// +200 vence, -200 perde, 0 neutro (inclusive mesmo elemento).
+    pub fn advantage_permille(att: Element, def: Element) -> i32 {
+        if def == att.cycle_next() {
+            200
+        } else if att == def.cycle_next() {
+            -200
+        } else {
+            0
+        }
+    }
+}
+
+// ── Cadeias elementais (v0.9) ────────────────────────────────────────────────
+/// Bônus de **Ressonância** (mesmo elemento do golpe ofensivo anterior do
+/// time) em per-mille — o bônus de "bombos com mesmo elemento".
+pub const RESONANCE_BONUS_PERMILLE: i32 = 150;
+/// Bônus de **Cadeia** (elemento na progressão do ciclo do golpe anterior)
+/// em per-mille — o bônus de combinar com OUTRO elemento formando cadeia.
+pub const CHAIN_BONUS_PERMILLE: i32 = 100;
+/// Fluxo extra para quem age em Ressonância — o acelerador de energia que
+/// liga o sistema de elementos à economia de fluxo (cap continua 100).
+pub const RESONANCE_FLUXO: i32 = 5;
+
 /// Papel tático de um personagem do contrato v2.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
@@ -437,6 +546,8 @@ pub struct RosterChar {
     pub name: String,
     pub faction: Faction,
     pub role: Role,
+    /// Elemento de combate (v0.9). Ausente no JSON → deriva do clã.
+    pub element: Element,
     pub hp: i32,
     pub attack: i32,
     pub defense: i32,
@@ -660,6 +771,18 @@ fn parse_char(i: usize, j: &crate::json::Json) -> Result<RosterChar, String> {
         }
     };
 
+    // v0.9 — `element` opcional: elemento de combate. Ausente → deriva do
+    // clã (ember→fogo, tide→agua, storm→eletrico, verdant→pedra).
+    let element = match j.get("element") {
+        None => Element::of_faction(faction),
+        Some(v) => {
+            let s = v
+                .as_str()
+                .ok_or_else(|| format!("roster: '{ctx}.element' deve ser string"))?;
+            Element::parse(s).map_err(|e| format!("roster: '{ctx}.{e}'"))?
+        }
+    };
+
     // v0.8 — `skill_targets` opcional: forma de alvo da Skill. Ausente →
     // a Skill herda a mystery (comportamento v0.7, retrocompatível).
     let skill_targets = match j.get("skill_targets") {
@@ -677,6 +800,7 @@ fn parse_char(i: usize, j: &crate::json::Json) -> Result<RosterChar, String> {
         name,
         faction,
         role,
+        element,
         hp,
         attack,
         defense,

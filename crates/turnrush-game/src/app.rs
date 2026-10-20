@@ -2258,7 +2258,8 @@ fn preencher_painel(ctl: &mut BattleController, chase: bool, pending: &mut Pendi
     pending.tactic = false;
     pending.tactic_descs = [String::new(), String::new()];
     let u = ctl.bt.unit(p.side, p.slot);
-    pending.name = u.name.clone();
+    // v0.9: glifo do elemento junto do nome (leitura do ciclo à vista).
+    pending.name = format!("[{}] {}", u.element.glyph(), u.name);
     pending.hp = u.hp;
     pending.hp_max = u.hp_max;
     pending.fluxo = u.fluxo;
@@ -2338,11 +2339,15 @@ fn preencher_painel(ctl: &mut BattleController, chase: bool, pending: &mut Pendi
             String::new()
         };
         pending.targets[k] = (
-            format!("{}{mys}", e.name),
+            format!("[{}] {}{mys}", e.element.glyph(), e.name),
             if e.hp_max > 0 { e.hp * 100 / e.hp_max } else { 0 },
             e.alive,
         );
-        pending.allies[k] = (a.name.clone(), if a.hp_max > 0 { a.hp * 100 / a.hp_max } else { 0 }, a.alive);
+        pending.allies[k] = (
+            format!("[{}] {}", a.element.glyph(), a.name),
+            if a.hp_max > 0 { a.hp * 100 / a.hp_max } else { 0 },
+            a.alive,
+        );
     }
     // chase
     pending.chasers = if chase { ctl.bt.chase_eligible_slots(p.side) } else { Vec::new() };
@@ -2526,6 +2531,31 @@ fn aplicar_evento(
             pb.outcome = *outcome;
             queue.0.push(VisEvent::End(*outcome == Outcome::TeamAWin));
             linha = format!("fim: {outcome:?}");
+        }
+        BattleEvent::ElementalCombo { side, slot, element, kind, bonus_permille } => {
+            // v0.9: Ressonância (mesmo elemento) ou Cadeia (progressão).
+            let nome = bt.unit(*side, *slot).name.clone();
+            linha = format!(
+                "✦ {} elemental de {}: {} (+{}% de dano)",
+                kind.label(),
+                element.label(),
+                nome,
+                bonus_permille / 10
+            );
+            queue.0.push(VisEvent::Elemental(kind.label()));
+        }
+        BattleEvent::ElementalHit { attacker, target, delta_permille } => {
+            // v0.9: vantagem/desvantagem no alvo — informação simétrica.
+            let a = bt.unit(attacker.0, attacker.1);
+            let t = bt.unit(target.0, target.1);
+            linha = format!(
+                "  ⚡ {} {} vs {} {}: {:+}%",
+                a.element.label(),
+                a.name,
+                t.element.label(),
+                t.name,
+                delta_permille / 10
+            );
         }
         BattleEvent::Unmodeled { text } => {
             linha = format!("[sem efeito] {text}");

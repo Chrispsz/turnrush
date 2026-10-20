@@ -282,9 +282,10 @@ fn self_target_e_provocacao_desviam_o_automatico() {
     bt.execute_action(ChosenAction::Act { kind: ActionKind::Standard, target: None })
         .expect("padrão banking");
 
-    // r3 (60 ⚡ exatos): MYSTERY do escudo+provocação.
+    // r3: MYSTERY do escudo+provocação. v0.9: cada padrão repetido fecha
+    // Ressonância (+5) → banking de 2 rodadas = (10+15+5)×2 + 10 = 70 ⚡.
     let _p = vez_de(&mut bt, 1, 0, 3);
-    assert_eq!(bt.unit(1, 0).fluxo, 60, "banking de 2 rodadas = 60 ⚡");
+    assert_eq!(bt.unit(1, 0).fluxo, 70, "banking de 2 rodadas = 70 ⚡ (Ressonância v0.9)");
     let evs = bt
         .execute_action(ChosenAction::Act { kind: ActionKind::Mystery, target: None })
         .expect("mystery da provocação");

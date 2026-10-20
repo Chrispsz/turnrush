@@ -34,7 +34,8 @@
 //! intocado: alimentação do Monte Carlo e playback legado.
 
 use crate::data::{
-    ComboState, InterruptDef, MysteryDef, Role, Roster, RosterChar, StandardDef, TargetSpec,
+    ComboState, Element, InterruptDef, MysteryDef, Role, Roster, RosterChar, StandardDef,
+    TargetSpec, CHAIN_BONUS_PERMILLE, RESONANCE_BONUS_PERMILLE, RESONANCE_FLUXO,
 };
 use crate::formation::{pct_after, plus_after};
 use crate::rng::Rng;
@@ -147,6 +148,25 @@ impl ActionKind {
             ActionKind::Skill => "Skill",
             ActionKind::Mystery => "Mystery",
             ActionKind::Interrupt => "Interrupt",
+        }
+    }
+}
+
+/// Tipo de elo elemental (v0.9): **Ressonância** — mesmo elemento do golpe
+/// ofensivo anterior do time — ou **Cadeia** — progressão do ciclo com
+/// elemento DIFERENTE (o que permite passivas combinarem entre elementos).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ElementalKind {
+    Ressonancia,
+    Cadeia,
+}
+
+impl ElementalKind {
+    /// Rótulo pt-BR para UI/log.
+    pub fn label(self) -> &'static str {
+        match self {
+            ElementalKind::Ressonancia => "Ressonância",
+            ElementalKind::Cadeia => "Cadeia",
         }
     }
 }
@@ -279,6 +299,19 @@ pub enum BattleEvent {
     RoundEnd { round: usize },
     /// Batalha concluída.
     BattleOver { outcome: Outcome },
+    /// v0.9: elo elemental fechado pela ação ofensiva — Ressonância (mesmo
+    /// elemento do golpe anterior do time) ou Cadeia (progressão do ciclo,
+    /// elemento DIFERENTE). `bonus_permille` já inclui passivas de sintonia.
+    ElementalCombo {
+        side: usize,
+        slot: usize,
+        element: Element,
+        kind: ElementalKind,
+        bonus_permille: i32,
+    },
+    /// v0.9: vantagem/desvantagem elemental no alvo — emitido só quando o
+    /// delta ≠ 0. Informação simétrica: os dois lados leem o mesmo evento.
+    ElementalHit { attacker: (usize, usize), target: (usize, usize), delta_permille: i32 },
     /// Passiva/efeito não modelado — honestidade acima de silêncio.
     Unmodeled { text: String },
 }
@@ -288,6 +321,8 @@ pub enum BattleEvent {
 pub struct UnitSnapshot {
     pub name: String,
     pub role: Role,
+    /// v0.9: elemento de combate — todo golpe ofensivo o carrega.
+    pub element: Element,
     pub hp: i32,
     pub hp_max: i32,
     pub shield: i32,
@@ -501,6 +536,8 @@ impl Default for SideEdge {
 struct IU {
     name: String,
     role: Role,
+    /// v0.9: elemento de combate — carregado por TODO golpe ofensivo.
+    element: Element,
     hp_max: i32,
     hp: i32,
     atk: i32,
@@ -542,6 +579,8 @@ struct IU {
     regen_turns: u32,
     chase_dmg_bonus_permille: i32,
     chase_fluxo_bonus: i32,
+    /// v0.9 (Alísio): bônus extra quando a ação forma CADEIA elemental.
+    chain_extra_permille: i32,
     chased: bool,
     chase_used: u32,
     acted: bool,
@@ -572,6 +611,9 @@ struct ISide {
     /// Ordem de ação da rodada corrente (slots por SPD desc).
     order: Vec<usize>,
     acted: [bool; 4],
+    /// v0.9: elemento do último golpe ofensivo do time (cadeia elemental).
+    /// Cura/escudo/interrupt não tocam; DoT não toca (não é ação).
+    last_off_element: Option<Element>,
     /// Bônus da primeira perseguição do time já usado nesta rodada.
     first_chase_used: bool,
     /// v0.8 (Provocação de Orson): slot do provocador + rodadas restantes.
@@ -673,7 +715,15 @@ impl InteractiveBattle {
                     u
                 })
                 .collect();
-            ISide { units, order: Vec::new(), acted: [false; 4], first_chase_used: false, taunt_target: None, taunt_rounds_left: 0 }
+            ISide {
+                units,
+                order: Vec::new(),
+                acted: [false; 4],
+                last_off_element: None,
+                first_chase_used: false,
+                taunt_target: None,
+                taunt_rounds_left: 0,
+            }
         };
         let sides = [mk(comp_a, &edge_a, &mut unmodeled), mk(comp_b, &edge_b, &mut unmodeled)];
         InteractiveBattle {
@@ -798,6 +848,14 @@ impl InteractiveBattle {
                 chase_fluxo_bonus = n;
             }
         }
+        // v0.9 (Alísio): sintonia com cadeia elemental — bônus CONDICIONAL
+        // (só quando a ação forma progressão do ciclo), nunca buff fixo.
+        // Texto sem “+” antes do % para não colidir com os parsers acima.
+        let chain_extra_permille = if low.contains("cadeia elemental") {
+            pct_after(&low, "causa").unwrap_or(0) * 10
+        } else {
+            0
+        };
         // SPD com bônus passivo (+10% de velocidade)
         let spd = if low.contains("velocidade") {
             if let Some(p) = pct_after(&low, "+") {
@@ -829,6 +887,7 @@ impl InteractiveBattle {
             IU {
                 name: c.name.clone(),
                 role: c.role,
+                element: c.element,
                 hp_max: hp_final,
                 hp: hp_final,
                 atk: atk_final,
@@ -862,6 +921,7 @@ impl InteractiveBattle {
                 regen_turns: 0,
                 chase_dmg_bonus_permille,
                 chase_fluxo_bonus,
+                chain_extra_permille,
                 chased: false,
                 chase_used: 0,
                 acted: false,
@@ -947,6 +1007,12 @@ impl InteractiveBattle {
         self.chain_links
     }
 
+    /// v0.9: elemento do último golpe ofensivo do time (estado da cadeia
+    /// elemental). `None` = o time ainda não golpeou.
+    pub fn chain_state(&self, side: usize) -> Option<Element> {
+        self.sides[side].last_off_element
+    }
+
     /// Passivas/efeitos não modelados (diagnóstico honesto).
     pub fn unmodeled(&self) -> &[String] {
         &self.unmodeled
@@ -981,6 +1047,7 @@ impl InteractiveBattle {
         UnitSnapshot {
             name: u.name.clone(),
             role: u.role,
+            element: u.element,
             hp: u.hp.max(0),
             hp_max: u.hp_max,
             shield: u.shield,
@@ -1247,12 +1314,35 @@ impl InteractiveBattle {
                         Vec::new()
                     }
                 };
+                // v0.9: cadeia elemental visível na prévia (mesmos helpers
+                // da execução — o que a prévia promete é o que acontece).
+                let res_fluxo = match self.chain_relation(side, slot) {
+                    Some((ElementalKind::Ressonancia, _)) => {
+                        notes.push(format!(
+                            "Ressonância elemental ({} em sequência): +{}% de dano e +{} de fluxo",
+                            u.element.label(),
+                            RESONANCE_BONUS_PERMILLE / 10,
+                            RESONANCE_FLUXO
+                        ));
+                        RESONANCE_FLUXO
+                    }
+                    Some((ElementalKind::Cadeia, _)) => {
+                        notes.push(format!(
+                            "Cadeia elemental ({} → {}): +{}% de dano",
+                            self.sides[side].last_off_element.map(|e| e.label()).unwrap_or("—"),
+                            u.element.label(),
+                            self.chain_bonus_permille(side, slot) / 10
+                        ));
+                        0
+                    }
+                    None => 0,
+                };
                 Ok(ActionPreview {
                     damage: self.standard_damage(side, slot, tslot),
                     heal: 0,
                     shield: 0,
                     states,
-                    fluxo_delta: FLUXO_STD_GAIN,
+                    fluxo_delta: FLUXO_STD_GAIN + res_fluxo,
                     targets: vec![(1 - side, tslot)],
                     notes,
                 })
@@ -1303,13 +1393,43 @@ impl InteractiveBattle {
                         notes.push("alvo automático: primeiro vivo da frente (alvo manual disponível)".to_string());
                     }
                     let damage: i32 = slots.iter().map(|&ts| self.tier_damage(side, slot, tier, ts)).sum();
+                    // v0.9: cadeia elemental visível na prévia.
+                    let res_fluxo = match self.chain_relation(side, slot) {
+                        Some((ElementalKind::Ressonancia, _)) => {
+                            notes.push(format!(
+                                "Ressonância elemental ({} em sequência): +{}% de dano e +{} de fluxo",
+                                u.element.label(),
+                                RESONANCE_BONUS_PERMILLE / 10,
+                                RESONANCE_FLUXO
+                            ));
+                            RESONANCE_FLUXO
+                        }
+                        Some((ElementalKind::Cadeia, _)) => {
+                            notes.push(format!(
+                                "Cadeia elemental ({} → {}): +{}% de dano",
+                                self.sides[side].last_off_element.map(|e| e.label()).unwrap_or("—"),
+                                u.element.label(),
+                                self.chain_bonus_permille(side, slot) / 10
+                            ));
+                            0
+                        }
+                        None => 0,
+                    };
                     let states: Vec<(usize, usize, ComboState)> = slots
                         .iter()
                         .filter(|&_ts| tier.applies != ComboState::None)
                         .map(|&ts| (1 - side, ts, tier.applies))
                         .collect();
                     let targets: Vec<(usize, usize)> = slots.iter().map(|&ts| (1 - side, ts)).collect();
-                    Ok(ActionPreview { damage, heal: 0, shield: 0, states, fluxo_delta: -custo, targets, notes })
+                    Ok(ActionPreview {
+                        damage,
+                        heal: 0,
+                        shield: 0,
+                        states,
+                        fluxo_delta: -custo + res_fluxo,
+                        targets,
+                        notes,
+                    })
                 }
             }
             ActionKind::Interrupt => {
@@ -1797,12 +1917,21 @@ impl InteractiveBattle {
     /// Dano final do padrão no alvo (com bônus e mitigações), sem mutação.
     fn standard_damage(&self, side: usize, slot: usize, tslot: usize) -> i32 {
         let u = &self.sides[side].units[slot];
-        let (tdef, t_red, t_dot) = {
+        let (tdef, t_red, t_dot, t_el) = {
             let t = &self.sides[1 - side].units[tslot];
             let red = if t.front_only_reduction && tslot >= 2 { 0 } else { t.dmg_reduction_permille };
-            (t.def, red, t.dot_turns > 0)
+            (t.def, red, t.dot_turns > 0, t.element)
         };
         let mut dmg = pace(crate::combat::damage_after_def(u.atk_eff(), u.standard.damage_pct, tdef));
+        // v0.9: cadeia elemental (uma vez por ação) + vantagem no alvo.
+        let chain = self.chain_bonus_permille(side, slot);
+        if chain > 0 {
+            dmg = dmg * (PER_MILLE + chain) / PER_MILLE;
+        }
+        let adv = Element::advantage_permille(u.element, t_el);
+        if adv != 0 {
+            dmg = dmg * (PER_MILLE + adv) / PER_MILLE;
+        }
         if t_dot && u.bonus_vs_dot > 0 {
             dmg = dmg * (PER_MILLE + u.bonus_vs_dot) / PER_MILLE;
         }
@@ -1873,10 +2002,10 @@ impl InteractiveBattle {
 
     /// Dano final do tier em um alvo (com perfuração/aura/mitigação).
     fn tier_damage(&self, side: usize, slot: usize, tier: &Tier, tslot: usize) -> i32 {
-        let (tdef, t_red) = {
+        let (tdef, t_red, t_el) = {
             let t = &self.sides[1 - side].units[tslot];
             let red = if t.front_only_reduction && tslot >= 2 { 0 } else { t.dmg_reduction_permille };
-            (t.def, red)
+            (t.def, red, t.element)
         };
         let eff_def = tdef * (100 - tier.pierce_def_pct) / 100;
         let mut dmg = pace(crate::combat::damage_after_def(
@@ -1884,6 +2013,15 @@ impl InteractiveBattle {
             tier.dmg_pct,
             eff_def,
         ));
+        // v0.9: cadeia elemental (uma vez por ação) + vantagem no alvo.
+        let chain = self.chain_bonus_permille(side, slot);
+        if chain > 0 {
+            dmg = dmg * (PER_MILLE + chain) / PER_MILLE;
+        }
+        let adv = Element::advantage_permille(self.sides[side].units[slot].element, t_el);
+        if adv != 0 {
+            dmg = dmg * (PER_MILLE + adv) / PER_MILLE;
+        }
         if tier.applies != ComboState::None {
             if let Some((_, p)) = self.sides[side].units[slot]
                 .team_bonus_vs
@@ -1929,10 +2067,82 @@ impl InteractiveBattle {
         let eco = self.edges[side].chain_dmg_per_link * (self.chain_links_round as i32);
         bonus += eco.min(self.edges[side].chain_dmg_cap);
         let mut dmg = pace(crate::combat::damage_after_def(c.atk_eff(), c.chase.damage_pct, tdef));
+        // v0.9: cadeia elemental (uma vez por ação) + vantagem no alvo.
+        let chain = self.chain_bonus_permille(side, chaser_slot);
+        if chain > 0 {
+            dmg = dmg * (PER_MILLE + chain) / PER_MILLE;
+        }
+        let adv = Element::advantage_permille(c.element, self.sides[enemy].units[tslot].element);
+        if adv != 0 {
+            dmg = dmg * (PER_MILLE + adv) / PER_MILLE;
+        }
         if bonus > 0 {
             dmg = dmg * (PER_MILLE + bonus) / PER_MILLE;
         }
         dmg
+    }
+
+    // ── Cadeia elemental (v0.9) ─────────────────────────────────────────────
+
+    /// Relação do elemento da ação com a cadeia ofensiva do time (leitura
+    /// pura): `Some((kind, bônus base))` quando forma Ressonância ou Cadeia.
+    fn chain_relation(&self, side: usize, slot: usize) -> Option<(ElementalKind, i32)> {
+        let el = self.sides[side].units[slot].element;
+        match self.sides[side].last_off_element {
+            None => None,
+            Some(prev) if prev == el => Some((ElementalKind::Ressonancia, RESONANCE_BONUS_PERMILLE)),
+            Some(prev) if el == prev.cycle_next() => Some((ElementalKind::Cadeia, CHAIN_BONUS_PERMILLE)),
+            Some(_) => None,
+        }
+    }
+
+    /// Bônus de cadeia da ação (per-mille), incluindo a passiva de sintonia
+    /// (que só conta em CADEIA — combinar com outro elemento).
+    fn chain_bonus_permille(&self, side: usize, slot: usize) -> i32 {
+        match self.chain_relation(side, slot) {
+            None => 0,
+            Some((ElementalKind::Ressonancia, b)) => b,
+            Some((ElementalKind::Cadeia, b)) => {
+                b + self.sides[side].units[slot].chain_extra_permille
+            }
+        }
+    }
+
+    /// Fecha o elo: registra o elemento do golpe, emite [`BattleEvent::
+    /// ElementalCombo`] e paga o fluxo da Ressonância. Chamar UMA vez por
+    /// ação ofensiva que causou dano (cura/escudo/interrupt não tocam).
+    fn update_chain(&mut self, side: usize, slot: usize) {
+        let el = self.sides[side].units[slot].element;
+        let rel = self.chain_relation(side, slot);
+        self.sides[side].last_off_element = Some(el);
+        if let Some((kind, base)) = rel {
+            let bonus = if kind == ElementalKind::Cadeia {
+                base + self.sides[side].units[slot].chain_extra_permille
+            } else {
+                base
+            };
+            self.outbox.push(BattleEvent::ElementalCombo {
+                side,
+                slot,
+                element: el,
+                kind,
+                bonus_permille: bonus,
+            });
+            if kind == ElementalKind::Ressonancia {
+                self.gain_fluxo(side, slot, RESONANCE_FLUXO);
+            }
+        }
+    }
+
+    /// Evento de vantagem elemental no alvo (só quando o delta ≠ 0).
+    fn emit_elemental_hit(&mut self, attacker: (usize, usize), target: (usize, usize)) {
+        let delta = Element::advantage_permille(
+            self.sides[attacker.0].units[attacker.1].element,
+            self.sides[target.0].units[target.1].element,
+        );
+        if delta != 0 {
+            self.outbox.push(BattleEvent::ElementalHit { attacker, target, delta_permille: delta });
+        }
     }
 
     fn do_standard(&mut self, side: usize, slot: usize, target: Option<usize>) {
@@ -1964,7 +2174,9 @@ impl InteractiveBattle {
             }
         }
         self.deal_damage(1 - side, tslot, dmg, 0);
-        // v0.8 (Orson): Muro Incandescente — quem acerta o padrão em Orson
+        // v0.9: vantagem elemental no alvo + elo da cadeia elemental.
+        self.emit_elemental_hit((side, slot), (1 - side, tslot));
+        self.update_chain(side, slot);
         // pega Queimadura por 1 rodada (30% do ATK do defensor). O tick é
         // visível no início da próxima rodada (mesma fidelidade do veneno).
         if self.sides[1 - side].units[tslot].on_hit_burn && self.sides[side].units[slot].alive {
@@ -2078,9 +2290,11 @@ impl InteractiveBattle {
                     slots.truncate(n);
                 }
                 let dot_novo = self.sides[side].units[slot].atk_eff() * DOT_ATK_PCT / 100;
+                let n_alvos = slots.len();
                 for tslot in slots {
                     let dmg = self.tier_damage(side, slot, tier, tslot);
                     self.deal_damage(enemy, tslot, dmg, tier.pierce_shield_pct);
+                    self.emit_elemental_hit((side, slot), (enemy, tslot));
                     if self.sides[enemy].units[tslot].alive {
                         let t = &mut self.sides[enemy].units[tslot];
                         if tier.dot {
@@ -2099,6 +2313,10 @@ impl InteractiveBattle {
                         queue.push((enemy, tslot, tier.applies));
                         self.outbox.push(BattleEvent::StateApplied { side: enemy, slot: tslot, state: tier.applies });
                     }
+                }
+                // v0.9: golpe ofensivo com dano fecha o elo da cadeia elemental.
+                if n_alvos > 0 {
+                    self.update_chain(side, slot);
                 }
             }
         }
@@ -2250,6 +2468,9 @@ impl InteractiveBattle {
         self.sides[side].first_chase_used = true;
         let dmg = self.chase_damage(side, chaser_slot, enemy, tslot);
         self.deal_damage(enemy, tslot, dmg, 0);
+        // v0.9: vantagem elemental no alvo + elo da cadeia elemental.
+        self.emit_elemental_hit((side, chaser_slot), (enemy, tslot));
+        self.update_chain(side, chaser_slot);
         self.chain_links += 1;
         self.chain_links_round += 1;
         let killed = !self.sides[enemy].units[tslot].alive;

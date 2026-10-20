@@ -19,7 +19,10 @@
 //!   ATK por rodada por 2 rodadas, sem stack). O que não é modelado fica
 //!   visível nos docs (nunca silencioso).
 
-use crate::data::{ComboState, Roster, TargetSpec};
+use crate::data::{
+    ComboState, Element, Roster, TargetSpec, CHAIN_BONUS_PERMILLE, RESONANCE_BONUS_PERMILLE,
+    RESONANCE_FLUXO,
+};
 use crate::rng::Rng;
 use crate::types::PER_MILLE;
 
@@ -151,6 +154,10 @@ struct FU {
     team_bonus_vs: Vec<(ComboState, i32)>,
     round_end_heal_pct: i32,
     round_start_chakra: i32,
+    /// v0.9: elemento de combate — carregado por TODO golpe ofensivo.
+    element: Element,
+    /// v0.9 (Alísio): bônus extra quando a ação forma CADEIA elemental.
+    chain_extra_permille: i32,
     chased: bool,
     alive: bool,
     mystery: crate::data::MysteryDef,
@@ -175,6 +182,9 @@ struct Side {
     units: Vec<FU>,
     /// Sequência de slots que age 1º..4º.
     order: [usize; FORMATION_SIZE],
+    /// v0.9: elemento do último golpe ofensivo do time (cadeia elemental).
+    /// Cura/escudo/interrupt não tocam; DoT não toca (não é ação).
+    last_off_element: Option<Element>,
 }
 
 impl Side {
@@ -333,6 +343,8 @@ impl Formation4v4 {
                         team_bonus_vs: Vec::new(),
                         round_end_heal_pct: 0,
                         round_start_chakra: 0,
+                        element: c.element,
+                        chain_extra_permille: 0,
                         chased: false,
                         alive: true,
                         mystery: c.mystery.clone(),
@@ -343,7 +355,7 @@ impl Formation4v4 {
                     u
                 })
                 .collect();
-            Side { units, order: [0, 1, 2, 3] }
+            Side { units, order: [0, 1, 2, 3], last_off_element: None }
         };
         let _ = seed; // seed documentada nos eventos do simulador (sessão única)
         Formation4v4 {
@@ -425,6 +437,13 @@ impl Formation4v4 {
         // "Os ataques de X aplicam Veneno (dano contínuo)"
         if low.contains("aplicam veneno") || low.contains("aplica veneno") || low.contains("queimadura") && low.contains("aplica") {
             u.dot_on_hit = true;
+        }
+        // v0.9 (Alísio): sintonia com cadeia elemental — bônus CONDICIONAL
+        // (só quando a ação forma progressão do ciclo), nunca buff fixo.
+        if low.contains("cadeia elemental") {
+            if let Some(p) = pct_after(&low, "causa") {
+                u.chain_extra_permille = p * 10;
+            }
         }
     }
 
@@ -799,6 +818,54 @@ impl Formation4v4 {
         }
     }
 
+    // ── Cadeia elemental (v0.9) ─────────────────────────────────────────────
+
+    /// Bônus de cadeia da ação (per-mille): **Ressonância** (mesmo elemento
+    /// do golpe ofensivo anterior do time) ou **Cadeia** (progressão do
+    /// ciclo) + passiva de sintonia (só em Cadeia). Leitura pura — a
+    /// mutação do estado é explícita em [`Self::update_chain`].
+    fn chain_bonus_permille(&self, side_idx: usize, slot: usize) -> i32 {
+        let el = self.sides[side_idx].units[slot].element;
+        let base = match self.sides[side_idx].last_off_element {
+            None => 0,
+            Some(prev) if prev == el => RESONANCE_BONUS_PERMILLE,
+            Some(prev) if el == prev.cycle_next() => CHAIN_BONUS_PERMILLE,
+            Some(_) => 0,
+        };
+        if base == CHAIN_BONUS_PERMILLE {
+            base + self.sides[side_idx].units[slot].chain_extra_permille
+        } else {
+            base
+        }
+    }
+
+    /// Registra o elemento do golpe ofensivo do time e concede o fluxo da
+    /// Ressonância (o acelerador que liga elementos à economia de energia).
+    /// `bonus` = o que [`Self::chain_bonus_permille`] devolveu ANTES do golpe.
+    fn update_chain(&mut self, side_idx: usize, slot: usize, bonus: i32) {
+        let el = self.sides[side_idx].units[slot].element;
+        let kind = match self.sides[side_idx].last_off_element {
+            Some(p) if p == el => Some("ressonância"),
+            Some(p) if el == p.cycle_next() => Some("cadeia"),
+            _ => None,
+        };
+        self.sides[side_idx].last_off_element = Some(el);
+        if kind == Some("ressonância") {
+            let u = &mut self.sides[side_idx].units[slot];
+            u.chakra = (u.chakra + RESONANCE_FLUXO).min(CHAKRA_CAP);
+        }
+        if self.log {
+            if let Some(k) = kind {
+                let uname = self.sides[side_idx].units[slot].name.clone();
+                self.ev(format!(
+                    "    [elemental] {k} de {}: {uname} (+{}% de dano)",
+                    el.label(),
+                    bonus / 10
+                ));
+            }
+        }
+    }
+
     fn cast_mystery(&mut self, side_idx: usize, slot: usize) {
         let (mname, chakra, cd, targets, dmg_pct, applies, effect) = {
             let u = &self.sides[side_idx].units[slot];
@@ -895,13 +962,32 @@ impl Formation4v4 {
                 };
                 targets_slots.retain(|&s| self.sides[enemy].units[s].alive);
                 let dot_text = low.contains("queimadura") || low.contains("veneno");
+                // v0.9: cadeia elemental (uma vez por ação) + vantagem por alvo.
+                let att_el = self.sides[side_idx].units[slot].element;
+                let chain = self.chain_bonus_permille(side_idx, slot);
+                let n_targets = targets_slots.len();
                 for tslot in targets_slots {
-                    let (tname, tdef, t_red) = {
+                    let (tname, tdef, t_red, t_el) = {
                         let t = &self.sides[enemy].units[tslot];
-                        (t.name.clone(), t.def, t.dmg_reduction_permille)
+                        (t.name.clone(), t.def, t.dmg_reduction_permille, t.element)
                     };
                     let eff_def = tdef * (100 - pierce_def_pct) / 100;
                     let mut dmg = pace(crate::combat::damage_after_def(atk, dmg_pct, eff_def));
+                    if chain > 0 {
+                        dmg = dmg * (PER_MILLE + chain) / PER_MILLE;
+                    }
+                    let adv = Element::advantage_permille(att_el, t_el);
+                    if adv != 0 {
+                        dmg = dmg * (PER_MILLE + adv) / PER_MILLE;
+                        if self.log {
+                            self.ev(format!(
+                                "    [elemental] {} vs {}: {:+}% de dano",
+                                att_el.label(),
+                                t_el.label(),
+                                adv / 10
+                            ));
+                        }
+                    }
                     // aura de equipe vs estado recém-aplicado
                     if applies != ComboState::None {
                         let bonus = self.sides[side_idx].units[slot]
@@ -933,6 +1019,10 @@ impl Formation4v4 {
                         self.ev(format!("    {tname} sofre {dmg}"));
                     }
                 }
+                // v0.9: golpe ofensivo com dano fecha o elo da cadeia elemental.
+                if n_targets > 0 {
+                    self.update_chain(side_idx, slot, chain);
+                }
             }
         }
         // estados aguardando perseguição (substitui o que restou da ação anterior)
@@ -958,11 +1048,29 @@ impl Formation4v4 {
         let atk = self.sides[side_idx].units[slot].atk_eff();
         let dot_on_hit = self.sides[side_idx].units[slot].dot_on_hit;
         let self_bonus = self.sides[side_idx].units[slot].bonus_vs.clone();
-        let (tname, tdef, t_red, t_dot) = {
+        let (tname, tdef, t_red, t_dot, t_el) = {
             let t = &self.sides[enemy].units[tslot];
-            (t.name.clone(), t.def, t.dmg_reduction_permille, t.dot_turns > 0)
+            (t.name.clone(), t.def, t.dmg_reduction_permille, t.dot_turns > 0, t.element)
         };
+        // v0.9: cadeia elemental (uma vez por ação) + vantagem no alvo.
+        let att_el = self.sides[side_idx].units[slot].element;
+        let chain = self.chain_bonus_permille(side_idx, slot);
         let mut dmg = pace(crate::combat::damage_after_def(atk, dmg_pct, tdef));
+        if chain > 0 {
+            dmg = dmg * (PER_MILLE + chain) / PER_MILLE;
+        }
+        let adv = Element::advantage_permille(att_el, t_el);
+        if adv != 0 {
+            dmg = dmg * (PER_MILLE + adv) / PER_MILLE;
+            if self.log {
+                self.ev(format!(
+                    "    [elemental] {} vs {}: {:+}% de dano",
+                    att_el.label(),
+                    t_el.label(),
+                    adv / 10
+                ));
+            }
+        }
         if t_dot {
             if let Some((_, p)) = self_bonus.iter().find(|(st, _)| *st == ComboState::None) {
                 dmg = dmg * (PER_MILLE + p) / PER_MILLE;
@@ -988,6 +1096,7 @@ impl Formation4v4 {
             }
         }
         self.deal_damage(enemy, tslot, dmg, 0);
+        self.update_chain(side_idx, slot, chain);
         self.ev(format!(
             "  [padrão] {} usa «{sname}» → {tname} sofre {dmg}",
             self.sides[side_idx].units[slot].name
@@ -1066,9 +1175,29 @@ impl Formation4v4 {
             self.sides[side_idx].units[cslot].chased = true;
             let atk = self.sides[side_idx].units[cslot].atk_eff();
             let tdef = self.sides[enemy].units[tslot].def;
-            let dmg = pace(crate::combat::damage_after_def(atk, cdmg_pct, tdef));
+            // v0.9: perseguição também carrega elemento (cadeia + vantagem).
+            let chain = self.chain_bonus_permille(side_idx, cslot);
+            let att_el = self.sides[side_idx].units[cslot].element;
+            let t_el = self.sides[enemy].units[tslot].element;
+            let mut dmg = pace(crate::combat::damage_after_def(atk, cdmg_pct, tdef));
+            if chain > 0 {
+                dmg = dmg * (PER_MILLE + chain) / PER_MILLE;
+            }
+            let adv = Element::advantage_permille(att_el, t_el);
+            if adv != 0 {
+                dmg = dmg * (PER_MILLE + adv) / PER_MILLE;
+                if self.log {
+                    self.ev(format!(
+                        "    [elemental] {} vs {}: {:+}% de dano",
+                        att_el.label(),
+                        t_el.label(),
+                        adv / 10
+                    ));
+                }
+            }
             let tname = self.sides[enemy].units[tslot].name.clone();
             self.deal_damage(enemy, tslot, dmg, 0);
+            self.update_chain(side_idx, cslot, chain);
             self.chain_links += 1;
             self.ev(format!(
                 "  [chase] {cname} persegue {} de {tname} → {dmg} de dano",

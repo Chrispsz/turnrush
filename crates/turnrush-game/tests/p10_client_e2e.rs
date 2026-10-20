@@ -1,6 +1,6 @@
-//! Peça 9 do quebra-cabeça: **o cliente de verdade, ponta a ponta**.
+//! Peça 10 do quebra-cabeça: **o cliente de verdade, ponta a ponta**.
 //!
-//! Encaixa nas peças 1–8: com dados, engine, economia, mira, passivas,
+//! Encaixa nas peças 1–9: com dados, engine, economia, mira, passivas,
 //! kits, corrente e run auditados, o binário `turnrush-game --check` prova
 //! o CIRCUITO COMPLETO do produto: roster embutido → batalha headless do
 //! motor → parser de eventos do cliente → controlador interativo →

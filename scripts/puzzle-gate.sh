@@ -2,7 +2,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # TurnRush — Puzzle Gate (suíte quebra-cabeça)
 #
-# Roda as 9 peças EM CADEIA, na ordem do encaixe:
+# Roda as 10 peças EM CADEIA, na ordem do encaixe:
 #   Peça 0  qualidade do código (clippy -D warnings)
 #   Peça 1  fundação de dados            (testes p01)
 #   Peça 2  determinismo                 (testes p02)
@@ -12,8 +12,9 @@
 #   Peça 6  kits e identidade de classe  (testes p06)
 #   Peça 7  corrente de batalha          (testes p07)
 #   Peça 8  ciclo de run                 (testes p08)
-#   Peça 9  cliente E2E (--check)        (testes p09)
-#   Peça 10 balanceamento Monte Carlo    (sim --quick --gate [+ formação])
+#   Peça 9  elementos e cadeias (v0.9)   (testes p09)
+#   Peça 10 cliente E2E (--check)        (testes p10)
+#   Peça 11 balanceamento Monte Carlo    (sim --quick --gate [+ formação])
 #
 # Uso:
 #   scripts/puzzle-gate.sh              # cadeia completa
@@ -67,23 +68,25 @@ peca 7 "corrente de batalha interativa" \
   cargo test -p turnrush-core --release --test p07_battle_chain
 peca 8 "ciclo de run roguelike" \
   cargo test -p turnrush-core --release --test p08_run_lifecycle
+peca 9 "elementos e cadeias de combo (v0.9)" \
+  cargo test -p turnrush-core --release --test p09_elements
 
 # Testes inline (as peças NÃO substituem os 100+ testes de módulo).
 peca "8b" "testes inline do core (regressão de módulo)" \
   cargo test -p turnrush-core --release --lib
 
 # Peça 9: o binário do jogo precisa existir — cargo compila via test target.
-peca 9 "cliente E2E (binário --check)" \
-  cargo test -p turnrush-game --release --test p09_client_e2e
+peca 10 "cliente E2E (binário --check)" \
+  cargo test -p turnrush-game --release --test p10_client_e2e
 
 if [ "$FAST" = "1" ]; then
   echo "─────────────────────────────────────────────────────────────"
-  echo "Peça 10 — balanceamento Monte Carlo: PULADA (PUZZLE_FAST=1)"
+  echo "Peça 11 — balanceamento Monte Carlo: PULADA (PUZZLE_FAST=1)"
   PASS=$((PASS + 1))
 else
-  peca 10 "balanceamento 1v1 (Monte Carlo, gate ≤ 0.15)" \
+  peca 11 "balanceamento 1v1 (Monte Carlo, gate ≤ 0.15)" \
     cargo run --release -p turnrush-sim -- --quick --gate --out /tmp/puzzle_balance.json
-  peca "10b" "balanceamento 4v4 (formação, desvio ≤ 0.15)" \
+  peca "11b" "balanceamento 4v4 (formação, desvio ≤ 0.15)" \
     cargo run --release -p turnrush-sim -- --formation4v4 --formation-gate --formation-sims 150 --out /tmp/puzzle_formation.json
 fi
 

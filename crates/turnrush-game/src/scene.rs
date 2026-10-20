@@ -34,6 +34,8 @@ pub enum VisEvent {
     Death(usize),
     /// Elo de cadeia (contador ao vivo).
     Chain,
+    /// v0.9: elo elemental (Ressonância/Cadeia) — texto flutuante central.
+    Elemental(&'static str),
     /// Abertura de rodada.
     Round(u64),
     /// Fim da batalha (true = vitória do jogador).
@@ -401,6 +403,10 @@ pub fn scene_fx(
                 if let Ok(mut t) = chains_lbl.single_mut() {
                     *t = Text::new(format!("Chains: {}", scene.chains));
                 }
+            }
+            VisEvent::Elemental(label) => {
+                // v0.9: Ressonância/Cadeia elemental — texto flutuante âmbar.
+                spawn_float(&mut cmds, Vec2::new(0.0, 214.0), label.to_string(), AMBER, 24.0);
             }
             VisEvent::Round(n) => {
                 spawn_banner(&mut cmds, format!("ROUND {n}"), TXT, 46.0, 1.5);

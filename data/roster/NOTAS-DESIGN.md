@@ -7,6 +7,12 @@
 > - `targets: ally_single` + `mystery.damage_pct` = **% do ATTACK** aplicado como **CURA** (Mender) ou **ESCUDO** (Bastion). `applies_state` só tem efeito em alvos inimigos.
 > - `enemies_front` = inimigos da linha de frente; `enemies_all` = todos; `random_2` = 2 aleatórios.
 > - Estados: `launch` (Lançamento/arremesso) → `knockback` (Empurrão) → `knockdown` (Derrubada); `none`.
+> - **v0.9 — `element` opcional**: `fogo|agua|eletrico|pedra`; ausente → deriva
+>   do clã (ember→fogo, tide→agua, storm→eletrico, verdant→pedra). Todo golpe
+>   ofensivo carrega o elemento de quem age: vantagem do ciclo ×1200‰ por alvo
+>   (Água>Fogo, Elétrico>Água, Pedra>Elétrico, Fogo>Pedra), Ressonância (mesmo
+>   elemento em sequência do time) +150‰ e +5⚡ para quem age, Cadeia (progressão
+>   do ciclo, elemento diferente) +100‰ — passiva de sintonia soma só na Cadeia.
 
 ## 1. Mapa clã → arquétipo
 
