@@ -4,6 +4,48 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/);
 versões seguem [SemVer](https://semver.org/lang/pt-BR/). O jogo está em
 **fase de mecânica**: arte/sprites/nomes finais são esboços conscientes.
 
+## [0.8.1] — suíte quebra-cabeça: testes em cadeia que cobrem tudo
+
+> Pedido: "crie um teste completo para testar tudo desse projeto e em
+> cadeia como um quebra-cabeça, que cubra de tudo, tanto da qualidade do
+> código quanto uso e etc". Executor mestre: `scripts/puzzle-gate.sh`.
+
+### Adicionado
+- **Suíte em cadeia de 9 peças** (`crates/*/tests/p01…p09`): dados →
+  determinismo → economia → mira → passivas → kits → corrente de batalha →
+  run → cliente E2E. Cada peça reasserta a âncora da anterior e usa só a
+  API pública da engine. **89 testes novos** (188 no core + game E2E).
+- **`scripts/puzzle-gate.sh`**: executor mestre com ✔/✘ por peça — clippy
+  `-D warnings`, 9 peças, testes inline e os gates de Monte Carlo (peça 10).
+- **Job de CI `puzzle-gate`** (`build.yml`): roda a cadeia inteira a cada push.
+- **`docs/TESTING.md`**: mapa do quebra-cabeça, regras da casa (API pública,
+  rosters sintéticos via `CharSpec`, determinismo) e os bugs que a suíte pegou.
+
+### Corrigido
+- **🐛 Interrupt morria depois da rodada 1** (achado da Peça 3): `open_round`
+  resetava o campo `u.acted` da unidade, mas NUNCA o array `sides[si].acted`
+  que a engine usa de verdade — `interrupt_targets` ficava vazio da rodada 2
+  em diante e o Interrupt (35⚡/CD3) era inutilizável exatamente quando a
+  economia permite pagá-lo. Correção: reset do array na abertura de rodada.
+
+### Verificado (auditado pela suíte, sem mudança de código)
+- **Mira**: padrão espelho 1↔1 com fallback ao primeiro vivo; alvo explícito
+  vale para qualquer vivo (traseira inclusa); `enemy_single` confirma acesso
+  à linha de trás; provocação desvia o automático; prévia = execução.
+- **Economia**: +10/+15/30/60/35, CDs 2/3/3, teto 100, teto da passiva de
+  chakra (+20), erros não consomem a vez, desconto do Gatilho Rápido chega
+  na engine (`mystery_cost`).
+- **Passivas**: 13 famílias testadas comportamentalmente (reflexo com número
+  exato, curas EoR, DoT, bônus condicional, escudo crescente, aceleração na
+  ordem…). `unmodeled` vazio em todas as composições do roster real.
+- **Kits**: orçamento por papel respeitado; anti-faz-tudo confirmado
+  (guardião = âncora de HP, striker = lâmina, suporte não compete, controlador
+  paga com vida); cadeias de combo fecham nos 4 clãs.
+- **Run**: carta → `SideEdge` → batalha muda de fato (Fluxo Estável +2,
+  Gatilho Rápido R3→R2 e 60→45, Último Suspiro revive 1×, Ambidestria permite
+  2ª perseguição com estado pendente, Eco de Combate bônusa do 2º elo em
+  diante); reroll é abastecido pela camada de run (1/batalha).
+
 ## [0.8.0] — kits com assinatura: alvo único, mecânicas reais e variedade
 
 > Auditoria de gameplay + passe de design inspirado em Into the Breach

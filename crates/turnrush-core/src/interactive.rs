@@ -1501,6 +1501,11 @@ impl InteractiveBattle {
         self.chain_links_round = 0;
         for si in 0..2 {
             self.sides[si].first_chase_used = false;
+            // Reset da janela de interrupt: os flags `acted` do lado precisam
+            // voltar a zero a cada rodada — sem isto, `interrupt_targets`
+            // fica vazio da rodada 2 em diante e o Interrupt (35⚡/CD3) morre
+            // exatamente quando a economia permite pagá-lo (regressão v0.7).
+            self.sides[si].acted = [false; 4];
             for slot in 0..4 {
                 let u = &mut self.sides[si].units[slot];
                 if !u.alive {

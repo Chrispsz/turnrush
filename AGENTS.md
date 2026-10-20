@@ -14,12 +14,20 @@ Guide for AI agents working in this repo. Read fully before editing. Keep change
 
 ```bash
 cargo test --workspace                                    # all tests must pass
+scripts/puzzle-gate.sh                                    # FULL chained suite (9 pieces + gates)
+PUZZLE_FAST=1 scripts/puzzle-gate.sh                      # chained suite, skip formation MC gate
 cargo clippy --workspace --all-targets -- -D warnings     # zero-warnings policy
 cargo run -p turnrush-game -- --check                     # smoke: headless battle + event counts
 cargo run -p turnrush-sim -- --formation-gate             # 4v4 balance gate (winrates)
 cargo run -p turnrush-game -- --shot /tmp/shots           # 5 headless screenshots (needs Xvfb + lavapipe)
 cargo run -p turnrush-game                                # playable client (menu → draft → battle)
 ```
+
+**Puzzle suite (docs/TESTING.md):** 9 chained integration-test pieces
+(data → determinism → economy → targeting → passives → kits → battle chain →
+run → client E2E) plus `scripts/puzzle-gate.sh` master runner and the
+`puzzle-gate` CI job. Integration tests use ONLY the public engine API —
+if a test needs new API, the UI probably needs it too.
 
 **Balance gate:** 4v4 mean winrate deviation must stay ≤ **0.15** (mirror ≈ 0.50). If you touch combat/roster/balance math, run the formation gate and report the numbers in your summary.
 
