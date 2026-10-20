@@ -231,7 +231,7 @@ Bevy 0.20 com `default-features = false` + features mínimas de UI. Estados
 ### Verificação visual sem interação (repro local + CI)
 
 - `--check`: headless (sem janela/wgpu) — roster + batalha real + parser.
-- `--shot <base>`: abre janela, navega Menu → Como Jogar → Elenco → Draft →
+- `--shot <base>`: abre janela, navega Menu → Elenco → Draft →
   Batalha e salva 5 PNGs, com verificação de arquivo gravado.
 - Ambiente sem GPU: Xvfb + mesa-vulkan-drivers (lavapipe) + libxkbcommon-x11 —
   comprovado no sandbox e no AppImage baixado da release.

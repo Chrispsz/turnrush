@@ -2,7 +2,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # TurnRush — Puzzle Gate (suíte quebra-cabeça)
 #
-# Roda as 10 peças EM CADEIA, na ordem do encaixe:
+# Roda as 11 peças EM CADEIA, na ordem do encaixe:
 #   Peça 0  qualidade do código (clippy -D warnings)
 #   Peça 1  fundação de dados            (testes p01)
 #   Peça 2  determinismo                 (testes p02)
@@ -14,7 +14,8 @@
 #   Peça 8  ciclo de run                 (testes p08)
 #   Peça 9  elementos e cadeias (v0.9)   (testes p09)
 #   Peça 10 cliente E2E (--check)        (testes p10)
-#   Peça 11 balanceamento Monte Carlo    (sim --quick --gate [+ formação])
+#   Peça 11 finalização garantida (v0.9.1)(testes p11)
+#   Peça 12 balanceamento Monte Carlo    (sim --quick --gate [+ formação])
 #
 # Uso:
 #   scripts/puzzle-gate.sh              # cadeia completa
@@ -79,14 +80,22 @@ peca "8b" "testes inline do core (regressão de módulo)" \
 peca 10 "cliente E2E (binário --check)" \
   cargo test -p turnrush-game --release --test p10_client_e2e
 
+# Unit tests do binário (controlador do modo manual — política do combo
+# automático v0.9.1 vive aqui; a peça 11 reasserta a política pelo core).
+peca "10b" "unit tests do binário (controlador manual + combo auto)" \
+  cargo test -p turnrush-game --release --bins
+
+peca 11 "finalização garantida (v0.9.1, playtest)" \
+  cargo test -p turnrush-game --release --test p11_finalizacao
+
 if [ "$FAST" = "1" ]; then
   echo "─────────────────────────────────────────────────────────────"
-  echo "Peça 11 — balanceamento Monte Carlo: PULADA (PUZZLE_FAST=1)"
+  echo "Peça 12 — balanceamento Monte Carlo: PULADA (PUZZLE_FAST=1)"
   PASS=$((PASS + 1))
 else
-  peca 11 "balanceamento 1v1 (Monte Carlo, gate ≤ 0.15)" \
+  peca 12 "balanceamento 1v1 (Monte Carlo, gate ≤ 0.15)" \
     cargo run --release -p turnrush-sim -- --quick --gate --out /tmp/puzzle_balance.json
-  peca "11b" "balanceamento 4v4 (formação, desvio ≤ 0.15)" \
+  peca "12b" "balanceamento 4v4 (formação, desvio ≤ 0.15)" \
     cargo run --release -p turnrush-sim -- --formation4v4 --formation-gate --formation-sims 150 --out /tmp/puzzle_formation.json
 fi
 

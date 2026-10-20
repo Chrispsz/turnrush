@@ -78,10 +78,10 @@ const ROUND_SECS: f32 = 0.80;
 pub enum GameState {
     #[default]
     Menu,
-    /// Tela de regras/controles ("Como Jogar").
-    ComoJogar,
     /// Visualizador do elenco completo (16 cartas, esboço).
     Elenco,
+    /// Página de detalhe de 1 personagem do elenco (kit completo, sem corte).
+    ElencoDetalhe,
     Draft,
     Battle,
     Reward,
@@ -171,8 +171,6 @@ pub struct ShotOpts {
 enum ShotPhase {
     Menu,
     MenuSalvo,
-    Ajuda,
-    AjudaSalvo,
     Elenco,
     ElencoSalvo,
     Draft,
@@ -204,7 +202,6 @@ pub struct MenuBtn(pub MenuAction);
 pub enum MenuAction {
     Play,
     Again,
-    Help,
     Elenco,
     Exit,
 }
@@ -263,9 +260,9 @@ pub struct RewardTargetBtn(pub usize);
 #[derive(Component)]
 pub struct GameOverText;
 
-/// Botão "Voltar" (telas Como Jogar e Elenco).
+/// Botão "Voltar" com destino embutido (Elenco → Menu; Detalhe → Elenco).
 #[derive(Component)]
-pub struct BackBtn;
+pub struct BackBtn(pub GameState);
 
 /// Botão de aceleração do playback (batalha).
 #[derive(Component)]
@@ -321,8 +318,6 @@ pub struct ManualRes {
 pub struct PendingUi {
     /// Painel ativo (vez do jogador).
     pub active: bool,
-    /// Janela de perseguição (ENTER confirma / ESC recusa).
-    pub chase: bool,
     /// Aguardando alvo (após escolher ação que precisa de um).
     pub choosing_target: bool,
     /// Alvo é inimigo (false = aliado, para Skill/Mystery de cura).
@@ -343,14 +338,12 @@ pub struct PendingUi {
     pub targets: [(String, i32, bool); 4],
     /// (nome, hp%, vivo) por slot aliado.
     pub allies: [(String, i32, bool); 4],
-    /// Slots aliados elegíveis na janela de chase.
-    pub chasers: Vec<usize>,
     /// Texto da timeline da rodada (ordem visível).
     pub timeline: String,
-    /// Chave da vez preenchida: (geração de decisão, chase). Enquanto a
-    /// mesma chave persiste, o painel NÃO é reenchido — protege a escolha
-    /// de alvo do jogador do re-preenchimento por frame (feedback B1).
-    pub key: Option<(u64, bool)>,
+    /// Chave da vez preenchida (geração de decisão). Enquanto a mesma chave
+    /// persiste, o painel NÃO é reenchido — protege a escolha de alvo do
+    /// jogador do re-preenchimento por frame (feedback B1).
+    pub key: Option<u64>,
     /// R1: janela de tática aberta (botões [1]/[2] escolhem a carta).
     pub tactic: bool,
     /// Descrições das 2 táticas ofertadas (linha de prévia).
@@ -420,41 +413,45 @@ pub struct DecPreviewText;
 #[derive(Component)]
 pub struct TimelineText;
 
-/// Faixa de perseguição (janela ativa).
+/// Faixa de perseguição (flash do combo automático, v0.9.1).
 #[derive(Component)]
 pub struct ChaseText;
 
-/// Conteúdo da tela "Como Jogar" — regras FIÉIS ao engine (formation.rs).
-const AJUDA: [(&str, &str); 7] = [
-    (
-        "1 · DRAFT — 8 cartas na mesa, escolha 4",
-        "A oferta é a mesma para os dois lados (simetria por construção).\nA IA monta o time inimigo entre os personagens restantes do elenco.",
-    ),
-    (
-        "2 · BATALHA 4v4 (VOCÊ COMANDA TUDO)",
-        "Timeline visível (SPD); A-B intercalado; quem abre a 1ª rodada é sorteado.\nPainel de comando: Padrão [1] grátis (⚡+15) · Skill [2] ⚡30/CD 2 ·\nMystery [3] ⚡60/CD 3 (destrava R3; a carta Gatilho Rápido antecipa) ·\nInterrupt [4] ⚡35/CD 3. O PADRÃO tem alvo automático: mira o inimigo na\nsua frente (1↔1, 2↔2…; caiu, o primeiro vivo da frente). STRIKERS têm\nALVO ÚNICO (skill/mystery): mira QUALQUER inimigo — linha de trás\ninclusive. Fluxo: +10/rodada, teto 100; guardar ⚡ antecipa a Mystery.\nPrévia EXATA antes de confirmar. Máximo de 10 rodadas — desempate por\n% de vida.",
-    ),
-    (
-        "3 · CHAIN COMBOS — PERSEGUIÇÃO MANUAL",
-        "Mysteries e ataques aplicam Arremessado/Empurrado/Derrubado. A janela de\nperseguição PAUSA o jogo: elegíveis brilham dourado. [ENTER] persegue ·\n[ESC] recusa (tática válida). Até 12 elos, 1 chase por unidade por rodada.",
-    ),
-    (
-        "4 · INTERRUPT — LEIA O INIMIGO",
-        "Os 4 Tacticians têm Interrupt: atordoam ou silenciam um inimigo que AINDA\nvai agiar nesta rodada. O jogo NÃO avisa — leia a timeline e o ⚡ do inimigo\n(mostrado dos dois lados). Atordoado perde a ação; silenciado não conjura.",
-    ),
-    (
-        "5 · TÁTICAS E CARTAS (ROGUELIKE)",
-        "A cada 2 rodadas (2/4/6/8) o jogo pausa: adote 1 de 2 TÁTICAS de\nbatalha [1]/[2] — efeito até o fim da batalha. O inimigo escolhe a dele\nem silêncio (mesma força, zero pista). Vitória → 1 de 3 cartas de RUN\n(Equipe/Unidade/Tática) — 1 reroll por batalha. Teto de poder da run:\n+30%. A 3ª batalha é o BOSS. 3 vitórias completam a run.",
-    ),
-    (
-        "6 · CLÃS E BALANCEAMENTO",
-        "Pyreborn, Duskmere, Thornvale e Skyrend dão identidade — NÃO existe\ncontador duro entre clãs. O calibrador DWC v2 mantém todas as composições\nem ~50% de winrate médio: a vantagem vem da sua leitura do confronto.",
-    ),
-    (
-        "7 · CONTROLES DA BATALHA",
-        "MOUSE: clique na ação — o Padrão dispara direto (alvo automático);\npoderes focados e alvos únicos abrem a fila de alvos (o Auto da fila\nusa o primeiro da frente). TECLADO: [1]-[4] ações · Q/W/E/R alvo\ninimigo · A/S/D/F alvo aliado · ENTER confirma/auto-alvo/persegue ·\nESC cancela/recusa · ESPAÇO 2× · Z modo Auto (IA joga por você).\nOs botões mostram a FORMA (· 1 alvo / frente / todos / 2 aleat.) e o\ncusto ⚡. O status M: da Mystery inimiga é público (R/CD/pronta).\nA IA inimiga usa EXATAMENTE as mesmas informações que você.",
-    ),
-];
+/// Carta do elenco clicável (índice no roster) — abre a página de detalhe.
+#[derive(Component)]
+pub struct ElencoCardBtn(pub usize);
+
+/// Personagem selecionado na página de detalhe do elenco.
+#[derive(Resource, Default)]
+pub struct ElencoSel(pub Option<usize>);
+
+/// Flash do combo automático (v0.9.1): o combo não pausa mais o jogo —
+/// aparece como faixa + destaque dourado enquanto `timer > 0`.
+#[derive(Resource, Default)]
+pub struct ComboFlash {
+    /// Texto da faixa ("COMBO! A → B").
+    pub texto: String,
+    /// Segundos restantes de destaque.
+    pub timer: f32,
+    /// Índices (side*4+slot) dos perseguidores elegíveis (borda dourada).
+    pub gold: Vec<usize>,
+}
+
+// ── Marcadores da página de detalhe do elenco ──
+#[derive(Component)]
+pub struct DetNameText;
+#[derive(Component)]
+pub struct DetSubText;
+#[derive(Component)]
+pub struct DetStatsText;
+#[derive(Component)]
+pub struct DetStandardText;
+#[derive(Component)]
+pub struct DetMysteryText;
+#[derive(Component)]
+pub struct DetChaseText;
+#[derive(Component)]
+pub struct DetPassiveText;
 
 /// Nomes de exibição oficiais (docs/NAMING.md) — ids internos estáveis.
 pub fn faction_display(f: &str) -> &'static str {
@@ -511,7 +508,8 @@ fn chase_line(c: &RosterChar) -> String {
     }
 }
 
-/// Carta do elenco: sprite genérico + identidade + kit completo (esboço).
+/// Carta do elenco: RESUMO clicável (v0.9.1) — só os estados principais.
+/// O kit completo mora na página de detalhe (o corte com clip sumiu).
 fn spawn_elenco_card(grid: &mut ChildSpawnerCommands, tex: &SpriteAssets, i: usize, c: &RosterChar) {
     let fac = c.faction.as_str();
     let sprite = grid
@@ -523,19 +521,25 @@ fn spawn_elenco_card(grid: &mut ChildSpawnerCommands, tex: &SpriteAssets, i: usi
     grid.spawn((
         Node {
             flex_direction: FlexDirection::Column,
-            row_gap: Val::Px(3.0),
-            padding: UiRect::all(Val::Px(9.0)),
+            row_gap: Val::Px(4.0),
+            padding: UiRect::all(Val::Px(10.0)),
             border: UiRect::all(Val::Px(2.0)),
             border_radius: BorderRadius::all(Val::Px(8.0)),
-            overflow: Overflow::clip(),
+            align_items: AlignItems::Center,
             ..default()
         },
+        Interaction::default(),
+        ElencoCardBtn(i),
         BackgroundColor(PANEL),
         BorderColor::all(faction_color(fac)),
     ))
     .add_child(sprite)
     .with_children(|p| {
-        p.spawn((Text::new(c.name.clone()), TextFont { font_size: px(16.0), ..default() }, TextColor(TXT)));
+        p.spawn((
+            Text::new(format!("{} {}", c.element.glyph(), c.name)),
+            TextFont { font_size: px(16.0), ..default() },
+            TextColor(TXT),
+        ));
         p.spawn((
             Text::new(format!("{} · {}", faction_display(fac), role_display(c.role.as_str()))),
             TextFont { font_size: px(11.0), ..default() },
@@ -550,25 +554,12 @@ fn spawn_elenco_card(grid: &mut ChildSpawnerCommands, tex: &SpriteAssets, i: usi
             TextColor(TXT_DIM),
         ));
         p.spawn((
-            Text::new(format!(
-                "M: {} · {}% · chakra {} · cd {} · {}{}",
-                c.mystery.name,
-                c.mystery.damage_pct,
-                c.mystery.chakra,
-                c.mystery.cooldown,
-                rotulo_alvo(c.mystery.targets),
-                estado(c.mystery.applies_state)
-            )),
-            TextFont { font_size: FontSize::Px(10.0), ..default() },
+            Text::new(format!("⚡ {} — {}", c.mystery.name, rotulo_alvo(c.mystery.targets))),
+            TextFont { font_size: FontSize::Px(11.0), ..default() },
             TextColor(AMBER),
         ));
         p.spawn((
-            Text::new(chase_line(c)),
-            TextFont { font_size: FontSize::Px(10.0), ..default() },
-            TextColor(TXT_DIM),
-        ));
-        p.spawn((
-            Text::new(format!("P: {} — {}", c.passive.name, c.passive.effect)),
+            Text::new("clique para o kit completo"),
             TextFont { font_size: FontSize::Px(10.0), ..default() },
             TextColor(TXT_DIM),
         ));
@@ -640,6 +631,8 @@ pub fn run(shot: Option<ShotOpts>, playback: bool) {
         .init_resource::<PendingUi>()
         .init_resource::<FxQueue>()
         .init_resource::<BattleScene>()
+        .init_resource::<ComboFlash>()
+        .init_resource::<ElencoSel>()
         .insert_resource(new_playback_placeholder())
         // Sprites em PreStartup: o Commands flusha na fronteira de schedule,
         // então Startup (setup_roots, embers) já enxerga Res<SpriteAssets>.
@@ -666,6 +659,12 @@ pub fn run(shot: Option<ShotOpts>, playback: bool) {
         .add_systems(Update, (sync_root_visibility, shot_tick, back_click, speed_click, scene::embers_tick))
         // Menu
         .add_systems(Update, menu_interactions.run_if(in_state(GameState::Menu)))
+        // Elenco + página de detalhe (v0.9.1)
+        .add_systems(
+            Update,
+            (elenco_card_click, elenco_detalhe_enter).run_if(in_state(GameState::Elenco)),
+        )
+        .add_systems(Update, elenco_detalhe_enter.run_if(in_state(GameState::ElencoDetalhe)))
         // Draft
         .add_systems(OnEnter(GameState::Draft), draft_enter)
         .add_systems(
@@ -812,7 +811,6 @@ fn shot_tick(
     st.timer -= time.delta_secs();
 
     let menu_png = variante(&st.base, "_menu");
-    let ajuda_png = variante(&st.base, "_como-jogar");
     let elenco_png = variante(&st.base, "_elenco");
     let draft_png = variante(&st.base, "_draft");
     let batalha_png = variante(&st.base, "_battle");
@@ -834,19 +832,6 @@ fn shot_tick(
             st.phase = ShotPhase::MenuSalvo;
         }
         ShotPhase::MenuSalvo if gravado(&menu_png) || st.timer <= 0.0 => {
-            next.set(GameState::ComoJogar);
-            st.timer = 1.2;
-            st.phase = ShotPhase::Ajuda;
-        }
-        ShotPhase::Ajuda if st.timer <= 0.0 => {
-            cmds
-                .spawn(Screenshot::primary_window())
-                .observe(save_to_disk(ajuda_png.clone()));
-            logger(info, "screenshot", "captura disparada", &[("path", s(&ajuda_png))]);
-            st.timer = 5.0;
-            st.phase = ShotPhase::AjudaSalvo;
-        }
-        ShotPhase::AjudaSalvo if gravado(&ajuda_png) || st.timer <= 0.0 => {
             next.set(GameState::Elenco);
             st.timer = 1.2;
             st.phase = ShotPhase::Elenco;
@@ -1032,7 +1017,6 @@ fn setup_roots(tex: Res<SpriteAssets>, mut cmds: Commands) {
                     }
                 });
                 btn(p, "Jogar", 340.0, MenuBtn(MenuAction::Play));
-                btn(p, "Como Jogar", 340.0, MenuBtn(MenuAction::Help));
                 btn(p, "Elenco", 340.0, MenuBtn(MenuAction::Elenco));
                 btn(p, "Sair", 340.0, MenuBtn(MenuAction::Exit));
                 p.spawn((
@@ -1051,10 +1035,12 @@ fn setup_roots(tex: Res<SpriteAssets>, mut cmds: Commands) {
             });
         });
 
-    // ── Como Jogar ──
+    // ── Detalhe do personagem (clique no elenco abre a página do kit) ──
+    // v0.9.1 (playtest): o kit NÃO cabe numa carta de grade — as páginas
+    // mostram o kit inteiro, sem corte.
     cmds.spawn((
         node_full(),
-        StateRoot(GameState::ComoJogar),
+        StateRoot(GameState::ElencoDetalhe),
         Visibility::Hidden,
     ))
     .with_children(|p| {
@@ -1065,39 +1051,34 @@ fn setup_roots(tex: Res<SpriteAssets>, mut cmds: Commands) {
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 padding: UiRect::all(Val::Px(22.0)),
-                row_gap: Val::Px(12.0),
+                row_gap: Val::Px(10.0),
                 ..default()
             },
         ))
         .with_children(|p| {
-            p.spawn((
-                Text::new("COMO JOGAR"),
-                TextFont { font_size: FontSize::Px(32.0), ..default() },
-                TextColor(AMBER),
-            ));
+            p.spawn((DetNameText, Text::new("—"), TextFont { font_size: FontSize::Px(30.0), ..default() }, TextColor(TXT)));
+            p.spawn((DetSubText, Text::new("—"), TextFont { font_size: FontSize::Px(15.0), ..default() }, TextColor(TXT_DIM)));
+            p.spawn((DetStatsText, Text::new("—"), TextFont { font_size: FontSize::Px(14.0), ..default() }, TextColor(TXT)));
             p.spawn((
                 Node {
-                    width: Val::Px(1040.0),
+                    width: Val::Px(900.0),
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(9.0),
+                    padding: UiRect::all(Val::Px(16.0)),
+                    border: UiRect::all(Val::Px(2.0)),
+                    border_radius: BorderRadius::all(Val::Px(10.0)),
                     ..default()
                 },
+                BackgroundColor(PANEL),
+                BorderColor::all(TXT_DIM),
             ))
             .with_children(|p| {
-                for (titulo, corpo) in AJUDA {
-                    p.spawn((
-                        Text::new(titulo),
-                        TextFont { font_size: FontSize::Px(16.0), ..default() },
-                        TextColor(TXT),
-                    ));
-                    p.spawn((
-                        Text::new(corpo),
-                        TextFont { font_size: FontSize::Px(14.0), ..default() },
-                        TextColor(TXT_DIM),
-                    ));
-                }
+                p.spawn((DetStandardText, Text::new("—"), TextFont { font_size: FontSize::Px(13.0), ..default() }, TextColor(TXT)));
+                p.spawn((DetMysteryText, Text::new("—"), TextFont { font_size: FontSize::Px(13.0), ..default() }, TextColor(AMBER)));
+                p.spawn((DetChaseText, Text::new("—"), TextFont { font_size: FontSize::Px(13.0), ..default() }, TextColor(TXT)));
+                p.spawn((DetPassiveText, Text::new("—"), TextFont { font_size: FontSize::Px(13.0), ..default() }, TextColor(GOOD)));
             });
-            btn(p, "Voltar", 240.0, BackBtn);
+            btn(p, "Voltar ao elenco", 260.0, BackBtn(GameState::Elenco));
         });
     });
 
@@ -1123,10 +1104,10 @@ fn setup_roots(tex: Res<SpriteAssets>, mut cmds: Commands) {
         .with_children(|p| {
             p.spawn((
                 Text::new(format!(
-                    "ELENCO — {} cartas (esboço: sprites genéricos e números provisórios)",
+                    "ELENCO — {} cartas · clique numa carta para abrir o kit completo (esboço: números provisórios)",
                     elenco.len()
                 )),
-                TextFont { font_size: px(24.0), ..default() },
+                TextFont { font_size: px(22.0), ..default() },
                 TextColor(TXT),
             ));
             p.spawn((
@@ -1144,7 +1125,7 @@ fn setup_roots(tex: Res<SpriteAssets>, mut cmds: Commands) {
                     spawn_elenco_card(grid, &tex, i, c);
                 }
             });
-            btn(p, "Voltar", 240.0, BackBtn);
+            btn(p, "Voltar", 240.0, BackBtn(GameState::Menu));
         });
     });
 
@@ -1648,7 +1629,6 @@ fn menu_interactions(
         }
         match b.0 {
             MenuAction::Play => state.set(GameState::Draft),
-            MenuAction::Help => state.set(GameState::ComoJogar),
             MenuAction::Elenco => state.set(GameState::Elenco),
             MenuAction::Again => {
                 cmds.insert_resource(new_run());
@@ -2119,7 +2099,7 @@ const fn pacing(ev: &BattleEvent, ff: bool) -> f32 {
             ActionKind::Interrupt => 0.45,
         },
         BattleEvent::ChaseResolved { .. } => 0.40,
-        BattleEvent::ChaseOffered { .. } => 0.0,
+        BattleEvent::ChaseOffered { .. } => 0.45, // flash visível do combo automático (v0.9.1)
         BattleEvent::BattleOver { .. } => 1.1,
         _ => 0.22,
     };
@@ -2143,6 +2123,7 @@ fn manual_tick(
     mut header: BattleHdrQuery,
     mut chains: ChainsTextQuery,
     mut queue: ResMut<FxQueue>,
+    mut flash: ResMut<ComboFlash>,
 ) {
     let Some(ctl) = manual.ctl.as_mut() else { return };
     if pb.finished {
@@ -2152,11 +2133,13 @@ fn manual_tick(
     if pb.wait > 0.0 {
         return;
     }
+    // decaimento do flash de combo (v0.9.1)
+    flash.timer = (flash.timer - time.delta_secs()).max(0.0);
 
     // 1) evento pendente na fila → reproduz (1 por tick)
     if let Some(ev) = ctl.next_event() {
         ctl.advance_event();
-        aplicar_evento(&ev, &mut pb, &mut log, &mut header, &mut chains, &mut queue, &mut ctl.bt);
+        aplicar_evento(&ev, &mut pb, &mut log, &mut header, &mut chains, &mut queue, &mut flash, &mut ctl.bt);
         pb.wait = pacing(&ev, ff.0);
         return;
     }
@@ -2165,8 +2148,10 @@ fn manual_tick(
     match ctl.pump() {
         CtlPhase::PlayingEvents => { /* eventos novos ficam para o próximo tick */ }
         CtlPhase::AwaitingPlayer { chase } => {
-            if ctl.auto_player {
-                // modo Auto: a IA simétrica decide pelo jogador
+            // v0.9.1: chase é resolvido NO controlador (combo automático) —
+            // aqui só chegam decisões de ação/tática. Defensivo: se um dia
+            // uma janela chegar, resolve como o modo Auto (nunca pausa).
+            if chase || ctl.auto_player {
                 let p = ctl.prompt().expect("prompt na vez");
                 let acao = if chase {
                     match ctl.bt.chase_eligible_slots(p.side).first() {
@@ -2179,7 +2164,7 @@ fn manual_tick(
                 let _ = ctl.submit(acao);
                 pb.wait = 0.12;
             } else {
-                preencher_painel(ctl, chase, &mut pending);
+                preencher_painel(ctl, &mut pending);
                 pb.wait = 0.05;
             }
         }
@@ -2190,24 +2175,22 @@ fn manual_tick(
             pb.chains = ctl.bt.chain_links();
             pb.rounds = ctl.bt.round() as u64;
             pending.active = false;
-            pending.chase = false;
         }
     }
 }
 
 /// Preenche o painel de decisão com o estado da vez corrente.
-fn preencher_painel(ctl: &mut BattleController, chase: bool, pending: &mut PendingUi) {
+fn preencher_painel(ctl: &mut BattleController, pending: &mut PendingUi) {
     let Some(p) = ctl.prompt() else { return };
     // B1 (feedback 2026-10-18): `manual_tick` chama isto todo frame; se a
-    // MESMA vez continua (mesma geração + mesma janela), preserva o estado
-    // da escolha em andamento (alvo selecionado etc.) em vez de resetar.
-    let chave = (ctl.bt.generation(), chase);
+    // MESMA vez continua (mesma geração), preserva o estado da escolha em
+    // andamento (alvo selecionado etc.) em vez de resetar.
+    let chave = ctl.bt.generation();
     if pending.active && pending.key == Some(chave) {
         return;
     }
     pending.key = Some(chave);
     pending.active = true;
-    pending.chase = chase;
     pending.choosing_target = false;
     pending.selected = None;
     pending.target_enemy = true;
@@ -2215,7 +2198,6 @@ fn preencher_painel(ctl: &mut BattleController, chase: bool, pending: &mut Pendi
     // (o inimigo já adotou a dele em silêncio; simetria de poder).
     if p.phase == turnrush_core::interactive::PromptPhase::ChooseTactic {
         pending.tactic = true;
-        pending.chase = false;
         pending.choosing_target = false;
         pending.selected = None;
         if let Some([a, b]) = ctl.bt.tactic_offer() {
@@ -2318,8 +2300,8 @@ fn preencher_painel(ctl: &mut BattleController, chase: bool, pending: &mut Pendi
     };
     pending.actions = [
         mk(ActionKind::Standard, u.standard_name.clone()),
-        mk(ActionKind::Skill, format!("Skill «{}»", u.skill_name)),
-        mk(ActionKind::Mystery, format!("Mystery «{}»", u.mystery_name)),
+        mk(ActionKind::Skill, u.skill_name.clone()),
+        mk(ActionKind::Mystery, u.mystery_name.clone()),
         mk(ActionKind::Interrupt, "Interrupt".to_string()),
     ];
     // alvos (v0.8: status da Mystery inimiga — informação pública e simétrica;
@@ -2349,8 +2331,6 @@ fn preencher_painel(ctl: &mut BattleController, chase: bool, pending: &mut Pendi
             a.alive,
         );
     }
-    // chase
-    pending.chasers = if chase { ctl.bt.chase_eligible_slots(p.side) } else { Vec::new() };
     // timeline visível (rodada corrente, marcando a posição)
     let tl = ctl.bt.timeline();
     let cur = ctl.bt.timeline_cursor();
@@ -2382,6 +2362,7 @@ fn aplicar_evento(
     header: &mut BattleHdrQuery,
     chains: &mut ChainsTextQuery,
     queue: &mut FxQueue,
+    flash: &mut ComboFlash,
     bt: &mut turnrush_core::interactive::InteractiveBattle,
 ) {
     use turnrush_core::interactive::SkipReason;
@@ -2397,7 +2378,8 @@ fn aplicar_evento(
                 ));
             }
             queue.0.push(VisEvent::Round(*round as u64));
-            linha = format!("— Rodada {round} —");
+            // v0.9.1 (playtest): o header JÁ mostra a rodada — a linha
+            // "— Rodada N —" repetida no log era poluição; sumiu.
         }
         BattleEvent::FluxoGain { side, slot, amount } => {
             pb.fluxo[side * 4 + slot] = bt.unit(*side, *slot).fluxo;
@@ -2482,18 +2464,18 @@ fn aplicar_evento(
         }
         BattleEvent::Skip { side, slot, reason } => {
             linha = match reason {
-                SkipReason::Dead => format!("{} está caído — vez passada", bt.unit(*side, *slot).name),
+                // v0.9.1: caído já foi anunciado por "✖ X caiu" — repetir a
+                // cada rodada era poluição; só o atordoado continua no log.
+                SkipReason::Dead => String::new(),
                 SkipReason::Stunned => format!("{} está atordoado — vez passada", bt.unit(*side, *slot).name),
             };
         }
         BattleEvent::ChaseOffered { side, target, state, eligible } => {
-            linha = format!(
-                "janela de perseguição: {} sob {} — {} pode perseguir",
-                bt.unit(target.0, target.1).name,
-                state.label(),
-                if eligible.is_empty() { "ninguém".to_string() } else { "aliado(s)".to_string() }
-            );
-            let _ = side;
+            // v0.9.1: combo automático — sem janela, sem instrução. Acende o
+            // dourado nos elegíveis; a faixa "COMBO!" vem no ChaseResolved.
+            flash.gold = eligible.iter().map(|&s| side * 4 + s).collect();
+            flash.timer = flash.timer.max(0.5);
+            let _ = (target, state);
         }
         BattleEvent::ChaseResolved { chaser, target, amount, killed } => {
             let ci = chaser.0 * 4 + chaser.1;
@@ -2513,10 +2495,19 @@ fn aplicar_evento(
             if let Ok(mut t) = chains.single_mut() {
                 *t = Text::new(format!("Chains: {}", pb.chains));
             }
-            linha = format!("chase: {} → {} ({amount} de dano)", bt.unit(chaser.0, chaser.1).name, bt.unit(target.0, target.1).name);
+            let perseguidor = bt.unit(chaser.0, chaser.1).name.clone();
+            let alvo = bt.unit(target.0, target.1).name;
+            linha = format!("⛓ combo: {perseguidor} → {alvo} ({amount})");
+            // flash da faixa (combo automático, v0.9.1)
+            flash.texto = format!("COMBO! {perseguidor} → {alvo}");
+            flash.timer = 1.2;
+            flash.gold = vec![ci];
         }
         BattleEvent::ChaseRejected { side } => {
-            linha = "cadeia recusada (tática)".to_string();
+            // recusa automática (ninguém elegível) é rotina silenciosa —
+            // v0.9.1 não polui mais o log com isso.
+            flash.timer = 0.0;
+            flash.gold.clear();
             let _ = side;
         }
         BattleEvent::TacticPicked { side, tactic } => {
@@ -2585,6 +2576,7 @@ fn aplicar_evento(
 #[allow(clippy::too_many_arguments)] // assinatura de sistema Bevy
 fn sync_decision_panel(
     pending: Res<PendingUi>,
+    flash: Res<ComboFlash>,
     mut panel: Query<&mut Visibility, (With<DecPanel>, Without<DecTargetRow>)>,
     mut trow: Query<&mut Visibility, (With<DecTargetRow>, Without<DecPanel>)>,
     mut scene: ResMut<BattleScene>,
@@ -2626,13 +2618,11 @@ fn sync_decision_panel(
     if let Ok(mut t) = title.single_mut() {
         *t = if pending.active && pending.tactic {
             Text::new("Escolha uma tática — [1]/[2] adotam")
-        } else if pending.active && !pending.chase {
+        } else if pending.active {
             Text::new(format!(
                 "Sua vez — {} · HP {}/{} · Fluxo ⚡{}",
                 pending.name, pending.hp, pending.hp_max, pending.fluxo
             ))
-        } else if pending.active {
-            Text::new(String::new())
         } else {
             Text::new("Sua vez")
         };
@@ -2641,8 +2631,10 @@ fn sync_decision_panel(
         *t = Text::new(pending.preview.clone());
     }
     if let Ok(mut t) = chase_banner.single_mut() {
-        *t = if pending.active && pending.chase {
-            Text::new("CADEIA! [ENTER] persegue · [ESC] recusa (tática válida)")
+        // v0.9.1: combo automático — a faixa mostra o flash resolvido
+        // ("COMBO! A → B") enquanto o timer vive; sem instrução ENTER/ESC.
+        *t = if flash.timer > 0.0 {
+            Text::new(flash.texto.clone())
         } else {
             Text::new(String::new())
         };
@@ -2705,19 +2697,15 @@ fn sync_decision_panel(
             Text::new(format!("{nome} [{motivo}]"))
         };
     }
-    // highlight dourado dos perseguidores elegíveis (cena)
-    scene.chase_gold = if pending.active && pending.chase {
-        pending.chasers.clone()
-    } else {
-        Vec::new()
-    };
+    // highlight dourado dos perseguidores elegíveis (cena) — vem do flash
+    // do combo automático (v0.9.1), não mais de uma janela pausada.
+    scene.chase_gold = if flash.timer > 0.0 { flash.gold.clone() } else { Vec::new() };
 }
 
 /// Cliques do painel de comando: ação → alvo (quando preciso) → executa.
 fn decision_click(
     mut manual: ResMut<ManualRes>,
     mut pending: ResMut<PendingUi>,
-    mut scene: ResMut<BattleScene>,
     q: Query<(&Interaction, &DecBtn), Changed<Interaction>>,
 ) {
     if !pending.active {
@@ -2734,13 +2722,8 @@ fn decision_click(
                     manual.auto = ctl.auto_player;
                 }
                 pending.active = false;
-                pending.chase = false;
-                scene.chase_gold.clear();
             }
             kind_btn => {
-                if pending.chase {
-                    continue; // na janela de chase só ENTER/ESC decidem
-                }
                 // R1: na janela de tática, [1]/[2] adotam a carta ofertada.
                 if pending.tactic {
                     let idx = match kind_btn {
@@ -2851,11 +2834,10 @@ fn format_previsao(prev: &Option<turnrush_core::interactive::ActionPreview>, kin
 fn target_click(
     mut manual: ResMut<ManualRes>,
     mut pending: ResMut<PendingUi>,
-    mut scene: ResMut<BattleScene>,
     targets: Query<(&Interaction, &DecTargetBtn), (Changed<Interaction>, Without<DecTargetAutoBtn>)>,
     autos: Query<&Interaction, (With<DecTargetAutoBtn>, Changed<Interaction>)>,
 ) {
-    if !pending.active || !pending.choosing_target || pending.chase {
+    if !pending.active || !pending.choosing_target {
         return;
     }
     let Some(kind) = pending.selected else { return };
@@ -2883,7 +2865,6 @@ fn target_click(
                     pending.active = false;
                     pending.choosing_target = false;
                     pending.selected = None;
-                    scene.chase_gold.clear();
                 }
                 Err(e) => {
                     // Recusa visível: a escolha permanece aberta para retry.
@@ -2903,7 +2884,6 @@ fn target_click(
                         pending.active = false;
                         pending.choosing_target = false;
                         pending.selected = None;
-                        scene.chase_gold.clear();
                     }
                     Err(e) => {
                         pending.preview = format!("⚠ ação recusada: {e:?}");
@@ -2916,15 +2896,15 @@ fn target_click(
 }
 
 /// Teclado da batalha manual (spec E.6): 1-4 ações · Q/W/E/R alvo inimigo ·
-/// A/S/D/F alvo aliado · ENTER confirma/auto-alvo/persegue · ESC cancela/recusa ·
+/// A/S/D/F alvo aliado · ENTER confirma/auto-alvo · ESC cancela ·
 /// TAB alterna alvo inimigo rápido · SPACE 2× · Z modo Auto.
+/// v0.9.1: sem teclas de chase — o combo é automático.
 #[allow(clippy::too_many_arguments)]
 fn battle_keys(
     keys: Res<ButtonInput<KeyCode>>,
     mut manual: ResMut<ManualRes>,
     mut pending: ResMut<PendingUi>,
     mut ff: ResMut<FastForward>,
-    mut scene: ResMut<BattleScene>,
 ) {
     if !pending.active {
         // SPACE fora da decisão também acelera
@@ -2942,31 +2922,6 @@ fn battle_keys(
             manual.auto = ctl.auto_player;
         }
         pending.active = false;
-        pending.chase = false;
-        scene.chase_gold.clear();
-        return;
-    }
-    // janela de chase: ENTER confirma (1º elegível), ESC recusa
-    if pending.chase {
-        if keys.just_pressed(KeyCode::Enter) {
-            if let Some(ctl) = manual.ctl.as_mut() {
-                let acao = match ctl.bt.chase_eligible_slots(0).first() {
-                    Some(&s) => ChosenAction::Chase { chaser_slot: s },
-                    None => ChosenAction::RejectChase,
-                };
-                let _ = ctl.submit(acao);
-            }
-            pending.active = false;
-            pending.chase = false;
-            scene.chase_gold.clear();
-        } else if keys.just_pressed(KeyCode::Escape) {
-            if let Some(ctl) = manual.ctl.as_mut() {
-                let _ = ctl.submit(ChosenAction::RejectChase);
-            }
-            pending.active = false;
-            pending.chase = false;
-            scene.chase_gold.clear();
-        }
         return;
     }
     // R1: janela de tática — [1]/[2] adotam; nada mais responde.
@@ -3042,7 +2997,6 @@ fn battle_keys(
                         pending.active = false;
                         pending.choosing_target = false;
                         pending.selected = None;
-                        scene.chase_gold.clear();
                     }
                     Err(e) => {
                         pending.preview = format!("⚠ ação recusada: {e:?}");
@@ -3068,19 +3022,94 @@ fn estado_icone(txt: &str) -> usize {
     }
 }
 
-/// Botão "Voltar" — volta ao menu a partir de Como Jogar ou Elenco.
+/// Botão "Voltar" — destino embutido no componente (Detalhe → Elenco → Menu).
 fn back_click(
     state: Res<State<GameState>>,
     mut next: ResMut<NextState<GameState>>,
-    q: Query<&Interaction, (With<BackBtn>, Changed<Interaction>)>,
+    q: Query<(&Interaction, &BackBtn), Changed<Interaction>>,
 ) {
-    if !matches!(state.get(), GameState::ComoJogar | GameState::Elenco) {
+    if !matches!(state.get(), GameState::Elenco | GameState::ElencoDetalhe) {
         return;
     }
-    for inter in q.iter() {
+    for (inter, b) in q.iter() {
         if *inter == Interaction::Pressed {
-            next.set(GameState::Menu);
+            next.set(b.0);
         }
+    }
+}
+
+/// Clique numa carta do elenco — abre a página de detalhe do kit (v0.9.1).
+fn elenco_card_click(
+    mut sel: ResMut<ElencoSel>,
+    mut state: ResMut<NextState<GameState>>,
+    q: Query<(&Interaction, &ElencoCardBtn), Changed<Interaction>>,
+) {
+    for (inter, b) in q.iter() {
+        if *inter == Interaction::Pressed {
+            sel.0 = Some(b.0);
+            state.set(GameState::ElencoDetalhe);
+        }
+    }
+}
+
+/// Preenche a página de detalhe com o kit COMPLETO do personagem selecionado
+/// (v0.9.1 — o kit não é mais cortado pela carta da grade).
+#[allow(clippy::type_complexity)] // queries com Without explícito (B0001)
+#[allow(clippy::too_many_arguments)] // uma query por texto da página
+fn elenco_detalhe_enter(
+    sel: Res<ElencoSel>,
+    mut nome: Query<&mut Text, (With<DetNameText>, Without<DetSubText>, Without<DetStatsText>, Without<DetStandardText>, Without<DetMysteryText>, Without<DetChaseText>, Without<DetPassiveText>)>,
+    mut sub: Query<&mut Text, (With<DetSubText>, Without<DetNameText>)>,
+    mut stats: Query<&mut Text, (With<DetStatsText>, Without<DetNameText>)>,
+    mut standard: Query<&mut Text, (With<DetStandardText>, Without<DetNameText>)>,
+    mut mystery: Query<&mut Text, (With<DetMysteryText>, Without<DetNameText>)>,
+    mut chase: Query<&mut Text, (With<DetChaseText>, Without<DetNameText>)>,
+    mut passiva: Query<&mut Text, (With<DetPassiveText>, Without<DetNameText>)>,
+) {
+    let elenco = load_roster_embedded();
+    let Some(i) = sel.0 else { return };
+    let Some(c) = elenco.characters.get(i) else { return };
+    let fac = c.faction.as_str();
+    let elemento = format!("{} {}", c.element.glyph(), c.element.label());
+    if let Ok(mut t) = nome.single_mut() {
+        *t = Text::new(c.name.clone());
+    }
+    if let Ok(mut t) = sub.single_mut() {
+        *t = Text::new(format!(
+            "{} · {} · elemento {}",
+            faction_display(fac),
+            role_display(c.role.as_str()),
+            elemento
+        ));
+    }
+    if let Ok(mut t) = stats.single_mut() {
+        *t = Text::new(format!(
+            "HP {} · ATQ {} · DEF {} · VEL {}",
+            c.hp, c.attack, c.defense, c.speed
+        ));
+    }
+    if let Ok(mut t) = standard.single_mut() {
+        *t = Text::new(format!(
+            "PADRÃO — {} · {}% do ATQ · alvo automático (espelhado 1↔1){}",
+            c.standard.name, c.standard.damage_pct, estado(c.standard.applies_state)
+        ));
+    }
+    if let Ok(mut t) = mystery.single_mut() {
+        *t = Text::new(format!(
+            "MYSTERY — {} · {}% do ATQ · ⚡ chakra {} · CD {} rodadas · {}{}",
+            c.mystery.name,
+            c.mystery.damage_pct,
+            c.mystery.chakra,
+            c.mystery.cooldown,
+            rotulo_alvo(c.mystery.targets),
+            estado(c.mystery.applies_state)
+        ));
+    }
+    if let Ok(mut t) = chase.single_mut() {
+        *t = Text::new(chase_line(c));
+    }
+    if let Ok(mut t) = passiva.single_mut() {
+        *t = Text::new(format!("PASSIVA — {} — {}", c.passive.name, c.passive.effect));
     }
 }
 
@@ -3215,7 +3244,6 @@ fn reward_click(
     pref: Res<PlaybackPref>,
     mut manual: ResMut<ManualRes>,
     mut pending: ResMut<PendingUi>,
-    mut scene: ResMut<BattleScene>,
     mut trow: Query<&mut Visibility, (With<RewardTargetRow>, Without<RewardBtn>)>,
     mut labels: Query<(&RewardTargetLabel, &mut Text), Without<RewardBtn>>,
     mut state: ResMut<NextState<GameState>>,
@@ -3240,7 +3268,7 @@ fn reward_click(
             }
             let slot = tb.0.min(3);
             tomar_carta(&mut run, &mut rw, card_idx, Some(slot));
-            iniciar_proxima_batalha(&mut run, &mut pb, &mut manual, &mut pending, &mut scene, &mut cmds, pref.0, &mut state);
+            iniciar_proxima_batalha(&mut run, &mut pb, &mut manual, &mut pending, &mut cmds, pref.0, &mut state);
             return;
         }
     } else if let Ok(mut v) = trow.single_mut() {
@@ -3268,7 +3296,7 @@ fn reward_click(
             continue;
         }
         tomar_carta(&mut run, &mut rw, pool_index(c), None);
-        iniciar_proxima_batalha(&mut run, &mut pb, &mut manual, &mut pending, &mut scene, &mut cmds, pref.0, &mut state);
+        iniciar_proxima_batalha(&mut run, &mut pb, &mut manual, &mut pending, &mut cmds, pref.0, &mut state);
         return;
     }
 }
@@ -3308,14 +3336,12 @@ fn iniciar_proxima_batalha(
     pb: &mut PlaybackRes,
     manual: &mut ManualRes,
     pending: &mut PendingUi,
-    scene: &mut BattleScene,
     cmds: &mut Commands,
     pref: bool,
     state: &mut ResMut<NextState<GameState>>,
 ) {
     pending.active = false;
     pending.choosing_target = false;
-    scene.chase_gold.clear();
     construir_batalha(pref, run, pb, manual, cmds);
     state.set(GameState::Battle);
 }
@@ -3360,7 +3386,7 @@ fn gameover_click(
                 cmds.insert_resource(new_run());
                 state.set(GameState::Draft);
             }
-            MenuAction::Play | MenuAction::Help | MenuAction::Elenco | MenuAction::Exit => {
+            MenuAction::Play | MenuAction::Elenco | MenuAction::Exit => {
                 turnrush_core::logger::shutdown();
                 exit.write(AppExit::Success);
             }

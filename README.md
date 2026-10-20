@@ -12,7 +12,7 @@ e balanceamento Monte Carlo (DWC/LCE).
 |---|---|
 | **Download** | [Releases (AppImage)](https://github.com/Chrispsz/turnrush/releases/latest) |
 | **Docs** | [GDD](docs/GDD.md) · [Arquitetura](docs/ARQUITETURA.md) · [Personagens](docs/PERSONAGENS.md) · [Cartas](docs/CARTAS.md) · [Nomenclatura](docs/NAMING.md) · [Logs](docs/LOGS.md) |
-| **Status** | v0.7.1 — modo interativo polido pelo playtest (alvo automático do básico, táticas a cada 2 rodadas, log enxuto), 95 testes, clippy limpo |
+| **Status** | v0.9.1 — elementos (fogo/água/elétrico/pedra), combo automático, fim de batalha garantido e UI limpa pelo playtest; 16 peças do quebra-cabeça verdes, clippy limpo |
 
 ## O que é
 
@@ -24,27 +24,33 @@ batalhas 4v4 com **cadeias de combo** (Lançamento → Empurrão → Derrubada),
 equilíbrio é **calibrado por dados** por um simulador Monte Carlo que roda no
 CI a cada commit.
 
-## O jogo hoje (v0.7.1)
+## O jogo hoje (v0.9.1)
 
 ```
-Menu → Como Jogar / Elenco → Draft (escolha 4 de 8) → Batalha 4v4 INTERATIVA
+Menu → Elenco (clique = página do kit) → Draft (escolha 4 de 8) → Batalha 4v4 INTERATIVA
      → CARTA (1 de 3, com reroll) → inimigo escala → 3ª luta = BOSS → 3 vitórias
 ```
 
 - **Modo interativo completo**: você comanda **tudo** — a timeline da rodada é
   visível (SPD), cada unidade tem Fluxo ⚡ (Padrão grátis e gera +15; Skill 30;
   Mystery 60 com desbloqueio R2/R3; Interrupt 35), e o painel mostra a
-  **prévia exata** de cada ação antes de confirmar. Perseguições são
-  **manuais**: a janela pausa o jogo, aliados elegíveis brilham dourado —
-  [ENTER] persegue, [ESC] recusa. Unidades com **Interrupt** atordoam ou
-  silenciam um inimigo que ainda vai agiar — o jogo não avisa: leia a
-  timeline e o fluxo alheio.
+  **prévia exata** de cada ação antes de confirmar. **Combos são automáticos**
+  (v0.9.1): quem tem o gatilho compatível persegue sozinho — o jogo mostra o
+  flash "COMBO!" e os elegíveis brilham dourado, sem pausa e sem custo ⚡.
+  Unidades com **Interrupt** atordoam ou silenciam um inimigo que ainda vai
+  agir — o jogo não avisa: leia a timeline e o fluxo alheio.
 - **Roguelike**: entre batalhas você compra 1 de 3 cartas (Equipe/Unidade/
   Tática, raridades e preferência de clã, teto de poder +30% na run). A 3ª
   batalha é o BOSS. Teto de 10 rodadas com desempate por % de vida.
+- **Elementos (v0.9)**: fogo, água, elétrico e pedra com ciclo de fraquezas
+  (Água > Fogo > Pedra > Elétrico > Água; ±20% de dano). **Ressonância** —
+  golpes de mesmo elemento em sequência do seu time dão +15% de dano e +5⚡
+  (o "bombo mono-elemento"); **Cadeia elemental** — golpear na progressão do
+  ciclo com elemento DIFERENTE dá +10% e abre espaço para passivas de
+  sintonia (+20%) formando combos entre elementos. Tudo visível na prévia.
 - **IA simétrica**: o adversário decide pela MESMA API que você usa
   (`legal_actions` + `preview_action`) — contrato testado, zero trapaça.
-- **Menu funcional**: Como Jogar (regras fiéis à engine), Elenco (as 16
+- **Menu funcional**: Elenco com página de detalhe por personagem (as 16
   cartas com kit completo) e **ESPAÇO = 2×** na batalha (modo legado 1×/6×
   preservado via `--playback`).
 - **Determinismo total**: RNG xoshiro256** + matemática inteira (per-mille) —
@@ -116,7 +122,7 @@ temática/mecânica, não pedra-papel-tesoura.
 |---|---|
 | **turnrush-core** | Motor determinístico (zero dependências): Formação 4v4 (chakra, cooldowns, cadeias de chase, passivas), draft simétrico + LCE, partida 1v1 de 9 rodadas, calibrador DWC, roster data-driven (contrato JSON v2), logs de sessão |
 | **turnrush-sim** | CLI: simulador Monte Carlo de composições (clãs puras + mistas), gate de equilíbrio de CI, diagnóstico de confrontos extremos, relatório JSON |
-| **turnrush-game** | Cliente 2D jogável (Bevy 0.20): menu, Como Jogar, Elenco, draft visual, **batalha manual** (painel Mystery/Padrão/alvo) ou Auto, barras de HP, flashes, log, Acelerar 1×/6×, recompensas, escalada de inimigos, fim de run |
+| **turnrush-game** | Cliente 2D jogável (Bevy 0.20): menu, Elenco + detalhe, draft visual, **batalha manual** (painel Mystery/Padrão/alvo) ou Auto, barras de HP, flashes, log, Acelerar 1×/6×, recompensas, escalada de inimigos, fim de run |
 
 ## Documentação
 

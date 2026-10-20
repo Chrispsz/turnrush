@@ -1,13 +1,13 @@
 //! TurnRush 2D — cliente visual jogável (Bevy).
 //!
 //! Modos:
-//! - sem argumentos → abre a janela do jogo (menu, como-jogar, elenco,
-//!   draft, batalha offline vs IA, recompensas, fim de run);
+//! - sem argumentos → abre a janela do jogo (menu, elenco + páginas de
+//!   detalhe, draft, batalha offline vs IA, recompensas, fim de run);
 //! - `--check`     → verificação headless (sem janela): roster embutido +
 //!   batalha real do engine + parser de eventos. Usado no CI/smoke test.
-//! - `--shot <caminho_base>` → abre a janela, navega menu → como-jogar →
-//!   elenco → draft → batalha, captura um PNG de cada tela
-//!   (`<base>_menu.png`, `<base>_como-jogar.png`, `<base>_elenco.png`,
+//! - `--shot <caminho_base>` → abre a janela, navega menu → elenco →
+//!   draft → batalha, captura um PNG de cada tela
+//!   (`<base>_menu.png`, `<base>_elenco.png`,
 //!   `<base>_draft.png`, `<base>_battle.png`) e sai. Prova de renderização
 //!   real sem interação — funciona com Xvfb + driver por software.
 

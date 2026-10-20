@@ -24,7 +24,8 @@ use turnrush_core::types::Outcome;
 pub enum CtlPhase {
     /// Há eventos na fila — reproduza 1 por tick e chame `pump` de novo.
     PlayingEvents,
-    /// Vez do jogador: decida com `submit` (ação padrão ou chase).
+    /// Vez do jogador: decida com `submit` (ação padrão ou tática). A janela
+    /// de chase NUNCA chega aqui — v0.9.1 resolve combo automaticamente.
     AwaitingPlayer { chase: bool },
     /// Batalha concluída.
     Done(Outcome),
@@ -118,20 +119,23 @@ impl BattleController {
                 }
             }
             PromptPhase::ConfirmChase => {
-                if prompt.side == 1 || self.auto_player {
-                    let acao = match self.bt.chase_eligible_slots(prompt.side).first() {
-                        Some(&s) => ChosenAction::Chase { chaser_slot: s },
-                        None => ChosenAction::RejectChase,
-                    };
-                    if self.submit(acao).is_err() {
-                        // recusa sempre emite evento — garante progresso
-                        let _ = self.submit(ChosenAction::RejectChase);
-                    }
-                    CtlPhase::PlayingEvents
-                } else {
-                    self.cached_prompt = Some(prompt);
-                    CtlPhase::AwaitingPlayer { chase: true }
+                // v0.9.1 (playtest 2026-10-20): combo AUTOMÁTICO — dos DOIS
+                // lados. A janela de chase NUNCA pausa o jogo esperando
+                // ENTER/ESC: quem tem gatilho compatível persegue sozinho o
+                // 1º elegível (a chance de acerto já é da engine). O playtest
+                // relatou a janela manual como confusa e capaz de travar o
+                // fim de batalha ("Vitórias 0/3" eterno). Zero custo de
+                // fluxo — perseguição nunca custou energia; a pausa é que
+                // parecia cobrar. API da engine intacta (testes p03/p07/p09).
+                let acao = match self.bt.chase_eligible_slots(prompt.side).first() {
+                    Some(&s) => ChosenAction::Chase { chaser_slot: s },
+                    None => ChosenAction::RejectChase,
+                };
+                if self.submit(acao).is_err() {
+                    // recusa sempre emite evento — garante progresso
+                    let _ = self.submit(ChosenAction::RejectChase);
                 }
+                CtlPhase::PlayingEvents
             }
             PromptPhase::ChooseTactic => {
                 if self.auto_player {
@@ -359,5 +363,72 @@ mod tests {
             }
         }
         assert!(ctl.is_done());
+    }
+
+    // ── v0.9.1 (playtest 2026-10-20): combo automático + fim garantido ──────
+
+    /// A janela de chase NUNCA pausa o jogador: em modo manual, nenhuma
+    /// decisão esperada é de chase — o controlador resolve sozinho e a
+    /// batalha SEMPRE converge para Done (regressão do travamento
+    /// "Vitórias 0/3" do playtest).
+    #[test]
+    fn combo_auto_nunca_pausa_e_batalha_sempre_finaliza() {
+        let r = roster();
+        for seed in [3u64, 11, 42, 77, 123, 999, 20_260_120] {
+            let mut ctl = BattleController::new(
+                &r, [0, 1, 2, 3], [4, 5, 6, 7], seed, SideEdge::default(), SideEdge::default(), false,
+            );
+            let mut passos = 0u32;
+            loop {
+                passos += 1;
+                assert!(passos < 100_000, "seed {seed}: batalha não converge");
+                match ctl.pump() {
+                    CtlPhase::PlayingEvents => ctl.advance_event(),
+                    CtlPhase::AwaitingPlayer { chase } => {
+                        assert!(!chase, "seed {seed}: janela de chase não deve pausar (combo é automático)");
+                        let p = ctl.prompt().expect("prompt na vez");
+                        let acao = if p.phase == PromptPhase::ChooseTactic {
+                            ChosenAction::PickTactic { index: 0 }
+                        } else {
+                            ChosenAction::Act { kind: ActionKind::Standard, target: None }
+                        };
+                        let _ = ctl.submit(acao);
+                    }
+                    CtlPhase::Done(_) => break,
+                }
+            }
+            assert!(ctl.outcome().is_some(), "seed {seed}: resultado ausente");
+            assert!(ctl.events_played() > 10, "seed {seed}: sem eventos?");
+        }
+    }
+
+    /// Combo automático é COERENTE: todo elo da engine (`chain_links`)
+    /// produz exatamente um evento `ChaseResolved` visível ao cliente —
+    /// nada de combo invisível, nada de evento fantasma.
+    #[test]
+    fn combo_auto_conta_elos_igual_a_engine() {
+        let r = roster();
+        let mut ctl =
+            BattleController::new(&r, [0, 1, 2, 3], [4, 5, 6, 7], 20_260_120, SideEdge::default(), SideEdge::default(), true);
+        loop {
+            match ctl.pump() {
+                CtlPhase::PlayingEvents => ctl.advance_event(),
+                CtlPhase::AwaitingPlayer { chase } => {
+                    assert!(!chase, "auto também não pausa chase");
+                    let p = ctl.prompt().expect("prompt");
+                    let _ = ctl.submit(greedy_decide(&ctl.bt, &p));
+                }
+                CtlPhase::Done(_) => break,
+            }
+        }
+        let ev_chases = ctl
+            .events
+            .iter()
+            .filter(|e| matches!(e, turnrush_core::interactive::BattleEvent::ChaseResolved { .. }))
+            .count() as u64;
+        assert_eq!(
+            ev_chases, ctl.bt.chain_links(),
+            "eventos de chase devem bater com os elos da engine"
+        );
     }
 }

@@ -4,6 +4,65 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/);
 versões seguem [SemVer](https://semver.org/lang/pt-BR/). O jogo está em
 **fase de mecânica**: arte/sprites/nomes finais são esboços conscientes.
 
+## [0.9.1] — playtest de áudio: combo automático, fim de batalha garantido e UI limpa
+
+> Fonte: playtest em áudio (2026-10-20, `gamereview-POLIDA.wav`) + parte
+> escrita. Relatos tratados como bugs/requisitos: "joguei duas batalhas, uma
+> perdi e outra ganhei e ele não finaliza a batalha após vencer"; "quando vai
+> fazer um combo ele pergunta… prefiro que o personagem faça o combo
+> automaticamente, até porque combo não é para gastar energia"; "pode ser
+> limpo esse texto que fica aqui embaixo de rodada"; "esse botão de
+> habilidade pode ser menos confuso"; "o como jogar pode até ser retirado do
+> jogo"; "o kit está bem cortado".
+
+### Corrigido
+- **Fim de batalha travado ("Vitórias 0/3" eterno)** — causa raiz: a janela
+  de chase manual (ENTER/ESC) pausava o jogo e era a única decisão que o
+  painel não resolvia; no golpe final ela podia ficar pendurada para sempre.
+  A janela manual **deixou de existir**: o combo agora é automático (abaixo) e
+  a peça 11 do quebra-cabeça garante que toda batalha converge para `Over`
+  (vitória, derrota ou teto de rodadas) — 16 seeds varridas + varredura de
+  janela "sempre tem elegível ou fecha sozinha".
+- **CI que nunca disparava em push para main** — `build.yml` tinha
+  `branches: ain]` (YAML válido, filtro sem sentido; os runs vinham só de
+  cron/dispatch/tag). Corrigido para `branches: [main]`.
+- **Kit cortado no elenco** — as cartas da grade mostravam o kit inteiro em
+  150px com `clip` (texto sumia). Agora a carta é RESUMO (elemento, clã,
+  classe, stats, ⚡ da Mystery) e **o clique abre a página do personagem**
+  com o kit COMPLETO (Padrão/Mystery/Chase/Passiva, sem corte).
+
+### Adicionado
+- **Combo automático (v0.9.1)** — a perseguição resolve sozinha dos DOIS
+  lados: quem tem gatilho compatível persegue o 1º elegível; a chance de
+  acerto continua na engine; **custa 0 ⚡** (nunca custou — a pausa é que
+  parecia cobrar). Feedback visual: faixa "COMBO! A → B" + destaque dourado
+  nos perseguidores (0,45–1,2 s), sem pausa, sem ENTER/ESC.
+- **Peça 11 do quebra-cabeça** (`tests/p11_finalizacao.rs`, 6 testes) +
+  peça 10b (unit tests do binário — política do controlador manual).
+  `puzzle-gate.sh` agora roda **16 peças**; CI e comentários atualizados.
+- **docs/COMO-JOGAR.md** — o conteúdo da tela "Como Jogar" (que saiu do
+  jogo) virou documento, atualizado com elementos (v0.9) e combo automático.
+
+### Alterado
+- **Log de batalha enxuto** (pedido direto do áudio): a linha "— Rodada N —"
+  sumiu (o header já mostra); caído não repete "vez passada" a cada rodada
+  (só o ✖ do momento); janela de perseguição/recusa automática ficaram
+  silenciosas; combo no log virou `⛓ combo: A → B (N)`. Teto de 8 linhas.
+- **Botões de habilidade menos confusos**: sumiram os prefixos
+  `Skill «…»`/`Mystery «…»` — os botões mostram o NOME do poder + forma de
+  alvo + custo ⚡ (ex.: `[2] Chama Residual · 1 alvo (livre) · ⚡30`).
+- **"Como Jogar" retirado do jogo** (entrada e tela removidas; o jogo
+  ensina pela prévia exata e pelos textos de botão — o guia completo está
+  em `docs/COMO-JOGAR.md` para voltar num menu de opções no 1.0).
+- `_gerador_roster.py` movido de `data/roster/` para `scripts/` (dados e
+  ferramentas separados).
+
+### Balanceamento
+- Intacto por construção: a política de chase automático escolhe o MESMO
+  alvo que a IA já escolhia (1º elegível) e a chance é da engine — os gates
+  confirmam: 1v1 desvio **0.1191** (≤ 0.15) ✓; 4v4 desvio **0.0469**,
+  espelho **0.5063** ([0.42, 0.58]) ✓.
+
 ## [0.9.0] — elementos e cadeias de combo: fogo, água, elétrico e pedra
 
 > Pedido: "vamos trabalhar com elementos nos personagens, sendo elétrico,
