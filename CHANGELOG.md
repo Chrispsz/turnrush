@@ -4,6 +4,46 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/);
 versões seguem [SemVer](https://semver.org/lang/pt-BR/). O jogo está em
 **fase de mecânica**: arte/sprites/nomes finais são esboços conscientes.
 
+## [0.10.0] — compatibilidade total de distros: AppImage autocontido, portátil sem FUSE e doctor
+
+> Gatilho: na **Archcraft Elite** (Wayland-only, labwc, debloat agressivo —
+> sem `fuse2`, stack X11 parcial) o AppImage da release não abria. Duas
+> causas raiz: o AppImage **não embutia nenhuma biblioteca** (dependia 100%
+> das libs do host) e distros mínimas não têm `libfuse2` (o AppImage nem
+> monta). A Elite tem Vulkan de série e XWayland — o pacote é que não
+> sobrevivia ao sistema enxuto.
+
+### Corrigido
+- **AppImage autocontido** — `scripts/bundle-appimage-libs.sh` embute no
+  AppDir toda a stack cliente que o winit/x11-dl/xkbcommon carregam em
+  runtime (libX11, X11-xcb, xcb + extensões, Xcursor, Xrandr, Xi, Xinerama,
+  xkbcommon, **xkbcommon-x11**, wayland-client/cursor) mais o fechamento
+  transitivo do `ldd`. **glibc e drivers gráficos seguem do host** (contrato
+  AppImage — e a única parte que não pode ser embutida). Verificação no fim
+  do script: nenhuma dependência pode ficar sem resolver.
+- **AppRun** exporta `LD_LIBRARY_PATH` do AppDir (`usr/lib`) antes de
+  executar — as libs embutidas precedem as do sistema sem jamais
+  substituir glibc/drivers.
+- **Wayland nativo por padrão** — feature `wayland` do Bevy habilitada no
+  `Cargo.toml` (antes só existia via flag no CI de release): sessões
+  Wayland-only como a labwc da Elite abrem direto, sem depender de
+  XWayland; `x11` segue habilitado para sessões X.
+
+### Adicionado
+- **`TurnRush-<versão>-linux-x64-portable.tar.gz`** — pacote portátil que
+  **não precisa de FUSE**: extrair e rodar `./turnrush.AppDir/turnrush`
+  (mesmo conteúdo do AppImage + `doctor.sh` + launcher).
+- **`turnrush-doctor.sh`** — diagnóstico de compatibilidade em pt-BR: FUSE2,
+  sessão gráfica (Wayland/X11), GPU/Vulkan (/dev/dri + ICDs) e varredura
+  `ldd` do binário real com mapeamento de pacotes
+  (pacman/apt/dnf/zypper). Asset solto na release e incluído no portátil.
+- **Smoke de empacotamento no CI de release** — o portátil é extraído em
+  diretório limpo e o jogo + simulador rodam via `./turnrush`; o AppImage
+  segue validado com `APPIMAGE_EXTRACT_AND_RUN` (`--check` + sim rápido).
+- **docs/COMPATIBILIDADE.md** — matriz "embutido × do host", comandos por
+  distro (Elite/Arch/CachyOS, Ubuntu/Debian, Fedora) e passo a passo
+  "o jogo não abriu".
+
 ## [0.9.1] — playtest de áudio: combo automático, fim de batalha garantido e UI limpa
 
 > Fonte: playtest em áudio (2026-10-20, `gamereview-POLIDA.wav`) + parte
