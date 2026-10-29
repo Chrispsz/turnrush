@@ -1,117 +1,152 @@
-# Direção de Arte & Pipeline de Sprites (v1 — aguardando os esboços autorais)
+# Direção de Arte & Pipeline de Sprites (v2 — referências do dono recebidas)
 
-> Estado: **estrutura pronta, produção não iniciada**. O dono vai enviar
-> esboços/direção de arte AUTORAIS (não-2D). Este documento fixa o pipeline
-> para convertê-los em sprites 2D **originais** (inspirados, nunca traçados),
-> com consistência entre os 16 personagens e animações integradas ao cliente
-> Bevy. Nada é gerado sem passar pelas etapas abaixo.
+> Estado: **direção v2 definida a partir das 7 referências enviadas pelo dono
+> (2026-10-20)**; 4 conceitos-mestre candidatos gerados e aguardando aprovação
+> para eleger o estilo-mestre. A v1 (pixel art 64×64) foi escrita *aguardando
+> os esboços* — com as referências em mãos, a direção é revista abaixo. O
+> pipeline (folha-mestre → família → auditoria) continua igual.
 
-## 0. Decisões-base (racional)
+## 0. As referências e como são usadas
 
-| Decisão | Escolha | Por quê |
+- 7 imagens de direção de arte enviadas pelo dono (armazenadas **localmente,
+  fora do repositório** — não versionamos arte de terceiros; o que sobe é
+  apenas a **tradução original** para os personagens do TurnRush).
+- Uso: **direção estética somente** (linework, paleta, silhueta, efeitos).
+  Personagens específicos das referências **não são copiados** — o elenco do
+  TurnRush é autoral (16 personagens, `data/roster/roster-v2.json`).
+- Prompts **nunca citam nomes de artistas vivos** (regra da v1 mantida).
+
+## 1. DNA de estilo extraído das referências
+
+| Traço | Regra para o TurnRush |
+|---|---|
+| Linework | Contorno de tinta confiante, espessura 2–3 px @256; hachura/crosshatch só em sombras secundárias |
+| Cor | **Fosco e esbatido**, sem gradiente pintado nem metal brilhante; 1 acento saturado por facção |
+| Silhueta | Grande e legível em preto absoluto; chapéus/elmos oversized; **rosto oculto** (visor, sombra + olhos acesos, lenço) sempre que o papel permitir |
+| Vestuário | Camadas de tecido (capas, saias, rolos de dormir, cordas), armadura remachada com tachas visíveis |
+| Efeitos | **Cel chapado** (respingo, fumaça, corte) — formas sólidas, nunca volumétrico |
+| Fundo | Pergaminho `#F2E0CC` em conceitos; **100% transparente** em sprite final |
+
+**Paleta base extraída das referências** (rampa global compartilhada):
+
+| Papel | Hex |
+|---|---|
+| Pergaminho (fundo de conceito) | `#F2E0CC` |
+| Tinta (contorno) | `#2A2830` |
+| Sombra hachurada | `#787068` |
+| Pele | `#C89A78` |
+| Osso/tecido claro | `#EFE8D8` |
+| Rosa pó | `#C9A2A2` |
+| Sálvia | `#8CA08C` |
+
+**Acento por facção** (1 cor dominante + 1 brilho, sobre a base):
+
+| Facção | Domínante | Brilho |
 |---|---|---|
-| Estilo | **Pixel art 64×64** | O cliente já renderiza procedural 64×64 com nearest-neighbor; leitura tática exige silhueta legível; é o estilo que IA acerta mais consistente (paleta + grid restringem o modelo); rota determinística/diffável |
-| Origem | Esboços autorais do dono | IP próprio — base legítima; saída SEMPRE re-desenhada no estilo do jogo (inspirado, não traçado) |
-| Consistência | **Folha-mestre (model sheet) primeiro** | 1 personagem aprovado vira o estilo-mestre, travado por sha256 ("master-lock"); todo o resto deriva dele |
-| Família | **Paleta do clã × silhueta da classe** | Reaproveita a lógica que o jogo já tem (PYREBORN/DUSKMERE/THORNVALE/SKYREND × Reaver/Bastion/Mender/Tactician): 16 personagens = 1 família + variações paramétricas |
-| Verificação | Auditoria executável + contact sheet | Consistência vira TESTE (alpha, dimensões, duplicados, atlas), não julgamento visual em ~640 frames |
+| EMBER (fogo) | terracota `#C4703F` | âmbar `#E0A458` |
+| TIDE (água) | ardósia `#6E8CA0` | jade `#7FBFAE` |
+| VERDANT (pedra/natureza) | sálvia `#8CA08C` | cardo `#A85C7A` |
+| STORM (elétrico) | ocre `#D9A648` | cinza-tempestade `#6E6E80` |
 
-## 1. Fluxo em 7 etapas
+## 2. Decisão revista (v1 → v2)
 
-1. **Esboço autoral recebido** → análise estrutural (pose, volumetria, paleta
-   sugerida, elementos de design) + tradução para a linguagem 2D do jogo.
-2. **Folha-mestre do 1º personagem** (turnaround 3/4 fixo, proporções em
-   "cabeças", rampas de paleta) → **aprovação do dono** → vira o
-   estilo-mestre (`assets/art/master/<char>-master.png` + lock sha256).
-3. **Contrato técnico** (`assets/art/contract.json`): frame 64×64, baseline
-   `y=58` (os pés onde o cliente espera hoje), direções (down/up/side com
-   flip), fundo transparente, paleta global do clã (16–32 cores
-   compartilhadas).
-4. **Produção por família**: cada novo personagem usa a folha-mestre como
-   referência de edição — NUNCA geração isolada. Restrição obrigatória de
-   prompt/frame: *mesmo tamanho, proporção, traje, cores e arma em todos os
-   frames; muda só a pose; sem personagens/efeitos extras vazando no frame*.
-5. **Pós-processo determinístico** (por sheet inteira): chroma-key → maior
-   componente conexo (preserva brancos internos como olhos) → corte uniforme
-   → âncora no baseline. Ferramentas: ImageMagick/Pillow (offline).
-6. **Auditoria + contact sheet**: checagens automáticas (RGBA/alpha,
-   dimensões, frames duplicados, contrato de atlas) + uma folha de contato
-   por personagem para aprovação humana antes de importar.
-7. **Integração Bevy**: atlas por `TextureAtlasLayout` + animação por
-   `Timer` com **duração por frame** (não-uniforme), `ImagePlugin::
-   default_nearest()` (já em uso). Nada sobe para o jogo sem passar pela
-   auditoria.
+| | v1 (aguardando esboços) | **v2 (com referências)** |
+|---|---|---|
+| Estilo | Pixel art 64×64 | **Ilustração a tinta, frame 256×256** |
+| Motivo | grid/paleta restringem a IA | As referências do dono **definem** tinta+hachura; 64×64 destruiria a hachura |
+| Baseline | `y=58` em 64 | `y=232` em 256 (**mesma proporção** 58/64 — integração no cliente vira `scale = 1/4`, posições não mudam) |
+| Filtragem | `ImagePlugin::default_nearest()` | **linear** (default do Bevy) na integração dos sprites de tinta |
+| Altura do personagem | ~48 px | 150–230 px (brutos ~220+, ágeis ~170) — hierarquia dentro do canvas uniforme |
 
-## 2. Animações: o que cada personagem precisa (ordem de produção)
+Todo o resto da v1 **se mantém**: folha-mestre com lock sha256, paleta de clã ×
+silhueta de classe, pós-processo determinístico, auditoria executável,
+contact sheet para aprovação, timing de frame não-uniforme.
 
-1. `idle` (loop) — a base; aparece 90% do tempo.
-2. `attack` (one-shot) — padrão/Skill.
-3. `hit` (one-shot curto) — feedback de dano.
-4. `cast` (one-shot) — Mystery (pode derivar de attack com paleta-swap de
-   flash).
-5. `move` (loop curto) — deslocamento/lançamento.
-6. `death` (one-shot, hold no último frame).
+## 3. Status: conceitos-mestre candidatos (Fase 1)
 
-## 3. FPS — o "60 FPS" bem-feito (sem 60 frames por segundo)
+Gerados em `assets/art/concepts/` (provenance em `assets/art/ledger.jsonl`):
 
-O jogo roda a 60 FPS; **a suavidade não vem de 60 desenhos por segundo**,
-vem de três camadas:
+| Conceito | Facção × Papel | Leitura | Status |
+|---|---|---|---|
+| `dalva-tide-conceito.png` | TIDE × guardian | elmo great-helm + coral, ondas cel | ✅ candidato forte |
+| `volta-storm-conceito.png` | STORM × controller | chapéu-cone estrelado, olhos acesos, raios cel | ✅ candidato forte |
+| `yara-verdant-conceito.png` | VERDANT × support | chapéu de musgo, staff anel, cardos | ✅ candidato |
+| `ignia-ember-conceito-v2.png` | EMBER × striker | lenço+brasa, bedroll, chama cel | ✅ candidato (v1 reprovado na cura: metal liso/rosto visível) |
+
+**Próximo passo do dono: aprovar/apontar ajustes** → o aprovado de cada
+"vencedor" de cura vira **estilo-mestre** (`assets/art/master/`, lock sha256)
+e os outros 12 personagens derivam por família (facção × papel).
+
+## 4. Fluxo de produção (7 etapas, da v1, inalterado)
+
+1. Referência/conceito aprovado → 2. folha-mestre (turnaround 3/4, proporções
+em "cabeças", rampas) → 3. contrato técnico (`assets/art/contract.json`:
+frame 256×256, baseline 232, fundo transparente, paleta) → 4. produção por
+família (novo personagem = **edição da folha-mestre**, nunca geração isolada;
+regra por frame: só a pose muda) → 5. pós determinístico (chroma-key → maior
+componente conexo → corte uniforme → âncora) → 6. auditoria + contact sheet →
+7. integração Bevy.
+
+## 5. Animações e o "60 FPS" (metas da v1 mantidas)
 
 | Animação | Frames | FPS do sprite | Notas |
 |---|---|---|---|
-| Idle (loop) | 4–6 | 6–8 | ciclo ~0,8 s; respiração/detalhe sutil |
-| Movimento (loop) | 6–8 | 10–12 | ciclo ~0,6 s |
-| Ataque (one-shot) | 4–6 | 12–15 | antecipação nos frames 1–2; **impacto segura 120–150 ms** |
-| Hit | 2–3 | 10–12 | ~0,2 s + hitstop 60–100 ms |
-| Morte/ultimate | 6–10 | 8–12 | hold no último frame |
+| idle (loop) | 4–6 | 6–8 | respiração; 90% do tempo em tela |
+| attack (one-shot) | 4–6 | 12–15 | antecipação; impacto segura 120–150 ms |
+| hit (one-shot) | 2–3 | 10–12 | + hitstop 60–100 ms |
+| cast (one-shot) | 4–6 | 12 | flash de paleta pode derivar de attack |
+| move (loop) | 6–8 | 10–12 | deslocamento/lançamento |
+| death (one-shot) | 6–10 | 8–12 | hold no último frame |
 
-- **Camada 1 (engine, 60 fps)**: deslocamento/escala/rotação interpolados no
-  `Transform` (lerp/exponential smoothing) — o sprite só dá o ciclo.
-- **Camada 2 (frame timing não-uniforme)**: durações por frame via
-  `Vec<Duration>` (o impacto do ataque é o frame mais longo).
-- **Camada 3 (game feel em código)**: hitstop, shake, squash de 1–2 px,
-  flash de palette-swap — já é linguagem da batalha atual (flashes por clã).
+Camadas de suavidade: **(1)** Transform interpolado a 60 fps (bob/sway
+procedural — nunca assado nos frames), **(2)** duração por frame
+(`Vec<Duration>`), **(3)** game feel em código (hitstop/shake/squash/flash).
 
-Resultado: leitura de "peso e impacto" a 60 FPS com 4–8 desenhos por ação —
-viável para 1 pessoa + IA (16 chars × ~40 frames ≈ 640 frames totais).
+**Stack Bevy 0.20 pesquisada (crates.io, 2026-10):**
 
-## 4. Kit de ferramentas (offline/local)
+| Crate | Ver. | Compatível 0.20? | Papel |
+|---|---|---|---|
+| `bevy_spritesheet_animation` | 8.0.1 | ✅ | flipbook declarativo (clips/loop/eventos) — escolhido |
+| `bevy_easings` | 0.20.0 | ✅ | interpoladores contínuos (bob/sway) — opcional |
+| `bevy_asset_loader` | 0.28.1 | ✅ | carga de atlases por estado — opcional |
+| `bevy_hanabi` | 0.19.0 | ❌ (aguardar 0.20) | partículas VFX — fase posterior |
+| `bevy_trickfilm`/`bevy_tweening` | — | ❌ obsoletos/lag | descartados |
 
-| Ferramenta | Papel no pipeline |
+Fallback aceito: `Timer` + `TextureAtlas::index` (padrão oficial
+`sprite_sheet.rs`, verificado no source 0.20.1).
+
+## 6. Kit de ferramentas
+
+| Ferramenta | Papel |
 |---|---|
-| ImageMagick (`montage -tile`, `-remap`, `-sample`) | montar sheets, paleta fixa, resize pixel-perfect |
-| Pillow (Python) | keying edge-connected, auditoria, âncoras |
-| pngquant / `magick -remap` | quantização para a paleta do clã |
-| rembg (opcional) | remoção de fundo ML para esboços complexos |
-| free-tex-packer-cli | atlas final (se sairmos do grid uniforme) |
-| ffmpeg | previz/timing a partir de referência |
+| `z-ai image` (CLI) | geração de conceito/folha-mestre; edições por frame a partir do mestre |
+| ImageMagick (`montage`, `-remap`, `-sample`) | sheets, paleta fixa, resize |
+| Pillow | keying edge-connected, auditoria, âncoras |
+| pngquant / `magick -remap` | quantização para a rampa da facção |
+| `texture_packer` / grid Bevy | atlas final (grid uniforme cobre nosso caso) |
 
-## 5. Skills instaladas (`.claude/skills/`)
+## 7. Provenance e licença
 
-| Skill | Uso |
-|---|---|
-| `turnrush-art-style` (própria) | **contrato de estilo do jogo** — carrega em qualquer tarefa de sprite |
-| `create-game-assets` (gamedev-skills, Apache-2.0) | direção de arte: brief técnico, famílias de assets, QA |
-| `ai-game-art-pipeline` (ybuild-ai, MIT) | keyframe-first → grid → key → âncora → contact sheet |
-| `ai-sprite-production-audit` (Kein-chronicle, MIT) | auditoria determinística (master-lock, ledger, manifest) |
-| `pixel-art-studio` (Gamezxz, MIT) | rota code-drawn (Pillow) quando quisermos determinismo total |
-| Rust/processo: `test-driven-development`, `systematic-debugging`, `writing-plans`, `verification-before-completion` (superpowers, MIT) | disciplina de dev |
-| `rust-best-practices`, `rust-review` (BeautifulRust, MIT) | idioms + review Rust |
-| `bevy-testing`, `bevy-ecs-systems`, `bevy-ecs-queries` (bevy-skills, MIT) | Bevy 0.20 por subsistema |
+- Cada PNG → linha em `assets/art/ledger.jsonl` (data, origem, ferramenta,
+  sha256, status de cura).
+- Referências do dono: arquivadas **fora do repo**; prompts sem nomes de
+  artistas; saída sempre re-desenhada (inspirado, nunca traçado).
+- Licença dos assets: **decisão do dono** na 1ª entrega (sugestão v1 segue:
+  CC-BY-4.0 para `assets/art/`, código MIT).
 
-## 6. Provenance e licença
+## 8. Faseamento
 
-- Todo PNG gerado ganha linha no **ledger** (`assets/art/ledger.jsonl`):
-  data, origem (esboço autoral nº X), ferramenta, modelo, sha256.
-- Direitos: base = esboços autorais do dono; saída = re-desenho original;
-  sem nomes de artistas vivos em prompts ("inspirado, não traçado").
-- Licença dos assets a definir na 1ª entrega (sugestão: CC-BY-4.0 para
-  `assets/art/`, mantendo o código MIT) — **decisão do dono**.
+1. **Fase 1 (agora)**: 4 conceitos candidatos → aprovação do dono ✅ aguardando
+2. **Fase 2**: folhas-mestre dos 4 + `idle/attack/hit` jogável dos
+   porta-estandarte (Ignia, Dalva, Yara, Volta) + `contract.json` + auditoria
+3. **Fase 3**: os outros 12 por família + `cast/move/death`
+4. **Fase 4**: integração Bevy (atlas + flipbook + Transform layer a 60 fps +
+   linear filtering) validada com `--shot`
 
-## 7. Definição de pronto (por personagem)
+## 9. Definição de pronto (por personagem — da v1, inalterada)
 
 - [ ] Folha-mestre aprovada pelo dono
-- [ ] idle + attack + hit (mínimo jogável) nas direções contratadas
+- [ ] idle + attack + hit (mínimo jogável)
 - [ ] Auditoria verde (alpha/dimensões/duplicados/atlas)
 - [ ] Contact sheet aprovada
-- [ ] Integrado no Bevy com timing por frame + playback a 60 fps sem drift
+- [ ] Integrado no Bevy, playback a 60 fps sem drift

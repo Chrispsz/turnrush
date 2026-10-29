@@ -61,7 +61,8 @@ if a test needs new API, the UI probably needs it too.
 - Experimental/scratch work goes in `/tmp`, never in the repo.
 - Curated agent skills live in `.claude/skills/` (list + rationale in
   `docs/ARTE-DIRECAO.md`). Any sprite/art task MUST load `turnrush-art-style`
-  first — it pins the 64×64/baseline/palette/silhouette contract.
+  first — it pins the frame/baseline/palette/silhouette contract (v2: inked
+  256×256, direction from the owner's 2026-10-20 references).
 
 ## Agent verification loop
 

@@ -4,6 +4,23 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/);
 versões seguem [SemVer](https://semver.org/lang/pt-BR/). O jogo está em
 **fase de mecânica**: arte/sprites/nomes finais são esboços conscientes.
 
+## [Não lançada]
+
+### Adicionado
+- **Direção de arte v2 (`docs/ARTE-DIRECAO.md`)** — definida a partir das 7
+  referências visuais enviadas pelo dono (2026-10-20): ilustração a tinta com
+  hachura, paleta fosca esbatida extraída das referências (pergaminho, tinta,
+  sálvia, terracota…), silhuetas grandes com rosto oculto e efeitos cel
+  chapados. Contrato técnico revisado: frame **256×256** com baseline `y=232`
+  (mesma proporção do contrato 64×64 — integração vira scale 1/4) e
+  filtragem linear. Pipeline de folha-mestre/auditoria da v1 mantido.
+- **4 conceitos-mestre candidatos** (`assets/art/concepts/`) — um por facção
+  (Dalva/TIDE, Volta/STORM, Yara/VERDANT, Ignia/EMBER) com provenance em
+  `assets/art/ledger.jsonl`; aguardando aprovação para eleger o estilo-mestre.
+- **Contrato `turnrush-art-style` atualizado para v2** e pesquisa de stack de
+  animação Bevy 0.20 documentada (`bevy_spritesheet_animation` 8.0.1 ✅,
+  `bevy_easings` 0.20 ✅, `bevy_hanabi` aguardando 0.20).
+
 ## [0.10.0] — compatibilidade total de distros: AppImage autocontido, portátil sem FUSE e doctor
 
 > Gatilho: na **Archcraft Elite** (Wayland-only, labwc, debloat agressivo —
