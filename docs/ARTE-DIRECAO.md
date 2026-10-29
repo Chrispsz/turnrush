@@ -73,9 +73,18 @@ Gerados em `assets/art/concepts/` (provenance em `assets/art/ledger.jsonl`):
 | `yara-verdant-conceito.png` | VERDANT × support | chapéu de musgo, staff anel, cardos | ✅ candidato |
 | `ignia-ember-conceito-v2.png` | EMBER × striker | lenço+brasa, bedroll, chama cel | ✅ candidato (v1 reprovado na cura: metal liso/rosto visível) |
 
-**Próximo passo do dono: aprovar/apontar ajustes** → o aprovado de cada
-"vencedor" de cura vira **estilo-mestre** (`assets/art/master/`, lock sha256)
-e os outros 12 personagens derivam por família (facção × papel).
+**Fase 2 (2026-10-29)**: 4 **folhas-mestre candidatas** derivadas por
+*edição encadeada* dos conceitos aprovados (`assets/art/master-candidates/`,
+2 poses + rampa de cores cada), **4 pacotes de VFX cel** (um por facção,
+`assets/art/vfx/`), **lineup de consistência** (`lineup-faccoes.png`,
+não-canon) e **2 frames de demo da cadeia idle** (Dalva A→B→C). Correções de
+cura aplicadas: Yara com meia-sombra no rosto; faixa de texto de IA cortada
+de Ignia/Yara no pós. Pendências da fase: `contract.json`, auditoria
+executável e contact sheets por personagem.
+
+**Próximo passo do dono: aprovar/apontar ajustes** → a folha aprovada de cada
+facção vira **estilo-mestre** (`assets/art/master/`, lock sha256) e os outros
+12 personagens derivam por família (facção × papel).
 
 ## 4. Fluxo de produção (7 etapas, da v1, inalterado)
 
@@ -137,8 +146,9 @@ Fallback aceito: `Timer` + `TextureAtlas::index` (padrão oficial
 ## 8. Faseamento
 
 1. **Fase 1 (agora)**: 4 conceitos candidatos → aprovação do dono ✅ aguardando
-2. **Fase 2**: folhas-mestre dos 4 + `idle/attack/hit` jogável dos
-   porta-estandarte (Ignia, Dalva, Yara, Volta) + `contract.json` + auditoria
+2. **Fase 2 (🔄 em andamento)**: folhas-mestre candidatas ✅ · VFX por
+   facção ✅ · lineup ✅ · demo de cadeia idle ✅ · faltam `contract.json`,
+   auditoria executável e contact sheets
 3. **Fase 3**: os outros 12 por família + `cast/move/death`
 4. **Fase 4**: integração Bevy (atlas + flipbook + Transform layer a 60 fps +
    linear filtering) validada com `--shot`

@@ -20,6 +20,13 @@ versões seguem [SemVer](https://semver.org/lang/pt-BR/). O jogo está em
 - **Contrato `turnrush-art-style` atualizado para v2** e pesquisa de stack de
   animação Bevy 0.20 documentada (`bevy_spritesheet_animation` 8.0.1 ✅,
   `bevy_easings` 0.20 ✅, `bevy_hanabi` aguardando 0.20).
+- **Fase 2 do pipeline de arte** — 4 folhas-mestre candidatas derivadas por
+  *edição encadeada* dos conceitos (`assets/art/master-candidates/`, 2 poses
+  + rampa de cores cada), 4 pacotes de VFX cel por facção (`assets/art/vfx/`),
+  lineup de consistência (`assets/art/lineup-faccoes.png`) e 2 frames de demo
+  da cadeia idle (Dalva); provenance completa no `assets/art/ledger.jsonl`
+  (16 entradas). Pendentes nesta fase: `contract.json`, auditoria e contact
+  sheets.
 
 ## [0.10.0] — compatibilidade total de distros: AppImage autocontido, portátil sem FUSE e doctor
 
