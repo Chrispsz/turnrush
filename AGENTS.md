@@ -59,6 +59,9 @@ if a test needs new API, the UI probably needs it too.
 - Tests live inline (`#[cfg(test)]`) next to the code; names describe behavior.
 - Commits: conventional, English, one logical change each.
 - Experimental/scratch work goes in `/tmp`, never in the repo.
+- Curated agent skills live in `.claude/skills/` (list + rationale in
+  `docs/ARTE-DIRECAO.md`). Any sprite/art task MUST load `turnrush-art-style`
+  first — it pins the 64×64/baseline/palette/silhouette contract.
 
 ## Agent verification loop
 
