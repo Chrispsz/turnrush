@@ -1,3 +1,15 @@
 /target
 **/*.rs.bk
 *.json.tmp
+
+# Packaging artifacts — CI builds these; never commit them
+/turnrush.AppDir/
+/TurnRush-*.AppImage
+/TurnRush-*-portable.tar.gz
+/turnrush-game-linux-x64.tar.gz
+/turnrush-sim-linux-x64.tar.gz
+/turnrush-doctor.sh
+/appimagetool
+/balance-report.json
+/formation-report.json
+/squashfs-root/

@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   release-linux:
-    name: Release Linux (jogo Bevy + sim musl + AppImage)
+    name: Release Linux (jogo Bevy + sim musl + AppImage self-contained)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,8 +18,17 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
 
-      - name: Instalar musl-tools e deps do Bevy
-        run: sudo apt-get update && sudo apt-get install -y musl-tools libwayland-dev libxkbcommon-dev
+      - name: Instalar musl-tools, deps de build Bevy e libs runtime p/ bundling
+        run: |
+          sudo apt-get update && sudo apt-get install -y \
+            musl-tools \
+            libwayland-dev libxkbcommon-dev \
+            libx11-6 libx11-xcb1 libxcb1 libxcb-cursor0 libxcb-render0 \
+            libxcb-shape0 libxcb-xfixes0 libxcb-xkb1 libxcb-icccm4 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-xinerama0 \
+            libxcursor1 libxi6 libxrandr2 libxinerama1 \
+            libxkbcommon0 libxkbcommon-x11-0 \
+            libwayland-client0 libwayland-cursor0
 
       - name: Garantir target musl no toolchain ativo
         run: rustup target add x86_64-unknown-linux-musl
@@ -47,9 +56,8 @@ jobs:
         run: |
           tar czf turnrush-game-linux-x64.tar.gz -C target/release turnrush-game
 
-      - name: Monta AppDir e AppImage
+      - name: Monta AppDir
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
           APPDIR="turnrush.AppDir"
           mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/metainfo" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps" "$APPDIR/usr/share/icons/hicolor/128x128/apps"
 
@@ -71,27 +79,64 @@ jobs:
 
           cp LICENSE "$APPDIR/" 2>/dev/null || true
 
+      # ── Self-contained: embute a stack cliente X11/xkb/wayland no AppDir ──
+      # Resolve o caso de distros mínimas/Wayland-only (ex.: Archcraft Elite)
+      # onde faltam libXcursor, libxkbcommon-x11 etc. e o jogo "não abria".
+      - name: Embutir bibliotecas no AppDir (self-contained)
+        run: |
+          chmod +x scripts/bundle-appimage-libs.sh
+          scripts/bundle-appimage-libs.sh turnrush.AppDir
+
+      - name: Monta AppImage
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           curl -fsSL -o appimagetool \
             https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool
 
           ARCH=x86_64 ./appimagetool --appimage-extract-and-run \
             --comp zstd \
-            "$APPDIR" "TurnRush-${VERSION}-x86_64.AppImage"
+            turnrush.AppDir "TurnRush-${VERSION}-x86_64.AppImage"
 
           chmod +x "TurnRush-${VERSION}-x86_64.AppImage"
 
-      - name: Smoke test do AppImage (jogo headless + sim quick)
+      # ── Pacote portátil SEM dependência de FUSE: extrair e rodar ./turnrush ──
+      - name: Empacota tar.gz portátil (não precisa de FUSE)
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cp scripts/doctor.sh turnrush.AppDir/doctor.sh
+          cat > turnrush.AppDir/turnrush <<'EOF'
+          #!/bin/sh
+          # TurnRush portátil: executa o AppRun do diretório extraído.
+          HERE="$(dirname "$(readlink -f "$0")")"
+          exec "$HERE/AppRun" "$@"
+          EOF
+          chmod +x turnrush.AppDir/turnrush turnrush.AppDir/doctor.sh
+          tar czf "TurnRush-${VERSION}-linux-x64-portable.tar.gz" turnrush.AppDir
+
+      - name: Copia doctor para asset solto
+        run: |
+          cp scripts/doctor.sh turnrush-doctor.sh
+          chmod +x turnrush-doctor.sh
+
+      - name: Smoke test do AppImage e do portátil (jogo headless + sim quick)
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           APPIMAGE_EXTRACT_AND_RUN=1 "./TurnRush-${VERSION}-x86_64.AppImage" --check
           APPIMAGE_EXTRACT_AND_RUN=1 "./TurnRush-${VERSION}-x86_64.AppImage" --quick --sims 2 --iters 1
+          # portátil: extrai em diretório limpo e roda pelo launcher ./turnrush
+          rm -rf /tmp/portable-smoke && mkdir /tmp/portable-smoke
+          tar xzf "TurnRush-${VERSION}-linux-x64-portable.tar.gz" -C /tmp/portable-smoke
+          /tmp/portable-smoke/turnrush.AppDir/turnrush --check
+          /tmp/portable-smoke/turnrush.AppDir/turnrush --quick --sims 2 --iters 1
 
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             TurnRush-*-x86_64.AppImage
+            TurnRush-*-linux-x64-portable.tar.gz
+            turnrush-doctor.sh
             turnrush-game-linux-x64.tar.gz
             turnrush-sim-linux-x64.tar.gz
           generate_release_notes: true

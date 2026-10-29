@@ -1,7 +1,13 @@
 #!/bin/sh
-# AppRun do TurnRush: resolve o diretório real e escolhe o binário.
-# Flags do simulador → turnrush-sim; qualquer outra coisa → o jogo.
+# AppRun do TurnRush: resolve o diretório real, aponta para as bibliotecas
+# empacotadas e escolhe o binário (sim = flags do simulador; jogo = o resto).
 HERE="$(dirname "$(readlink -f "$0")")"
+# Stack cliente X11/xkb/wayland empacotada em usr/lib (AppImage autocontido):
+# precede as libs do sistema — glibc e drivers gráficos NÃO são empacotados,
+# então sempre vêm do host, como deve ser.
+if [ -d "$HERE/usr/lib" ]; then
+  export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 case "$1" in
   --quick|--gate|--match|--formation4v4|--formation-gate|--formation-demo|--probe|--sims|--iters|--threads|--out)
     exec "$HERE/usr/bin/turnrush-sim" "$@" ;;

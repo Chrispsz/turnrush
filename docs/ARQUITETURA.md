@@ -188,9 +188,11 @@ e **cron noturno `0 7 * * *`** (04:00 em São Paulo; Monte Carlo completo):
 
 **Release** (`release.yml`) — dispara em tag `v*`: compila o jogo (glibc,
 wayland+x11) e o simulador (**musl estático**), roda smoke tests
-(`--check` + sim rápido), monta o AppDir e o AppImage (`appimagetool --comp
-zstd`), valida AppStream strict e publica na release com os 3 artefatos
-(AppImage + 2 tar.gz).
+(`--check` + sim rápido), monta o AppDir, **embute a stack cliente
+X11/xkb/wayland no AppDir** (`scripts/bundle-appimage-libs.sh`) e o AppImage
+(`appimagetool --comp zstd`), empacota o **portátil sem FUSE** e o
+**doctor**, valida AppStream strict e publica na release com 5 artefatos
+(AppImage, portátil, doctor, 2 tar.gz).
 
 ## AppImage
 
@@ -198,9 +200,22 @@ zstd`), valida AppStream strict e publica na release com os 3 artefatos
   dinâmico, abre com clique duplo (`Exec=turnrush-game`, `Terminal=false`).
 - O **simulador** vai embutido como ferramenta secundária (musl estático) e o
   `AppRun` roteia flags do sim.
+- **Self-contained**: o `AppRun` exporta `LD_LIBRARY_PATH=$APPDIR/usr/lib` e
+  o bundler copia para lá toda a stack cliente (X11/xcb, Xcursor, Xrandr,
+  Xi, Xinerama, xkbcommon, xkbcommon-x11, wayland-client/cursor + fechamento
+  ldd) **e também as libs que o winit carrega via dlopen** (invisíveis ao
+  ldd). glibc e drivers gráficos NUNCA são embutidos (contrato AppImage).
+  Com isso o pacote abre em distros mínimas/Wayland-only (Archcraft Elite).
+- **Portátil** (`*-portable.tar.gz`): o mesmo AppDir comprimido — não usa
+  FUSE; extrair e rodar `./turnrush.AppDir/turnrush`. Para distros sem
+  `fuse2` sem instalar nada.
+- **`turnrush-doctor.sh`**: diagnóstico pt-BR do host (FUSE2, sessão, GPU/
+  Vulkan, libs) com comandos prontos; asset da release e dentro do portátil.
 - AppDir completo: `AppRun`, `.desktop`, metainfo AppStream 1.0
   (`io.github.Chrispsz.turnrush`), ícones hicolor 128/256, `.DirIcon`, LICENSE.
-- Smoke test do artefato antes do upload: jogo `--check` + sim `--quick`.
+- Smoke test do artefato antes do upload: AppImage via
+  `APPIMAGE_EXTRACT_AND_RUN` (jogo `--check` + sim `--quick`) e portátil
+  extraído em diretório limpo (mesmos smokes via `./turnrush`).
 - Compressão **zstd** (obrigatória no `appimagetool` continuous).
 
 ## Cliente 2D jogável (`turnrush-game`)

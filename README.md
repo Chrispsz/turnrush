@@ -12,7 +12,7 @@ e balanceamento Monte Carlo (DWC/LCE).
 |---|---|
 | **Download** | [Releases (AppImage)](https://github.com/Chrispsz/turnrush/releases/latest) |
 | **Docs** | [GDD](docs/GDD.md) · [Arquitetura](docs/ARQUITETURA.md) · [Personagens](docs/PERSONAGENS.md) · [Cartas](docs/CARTAS.md) · [Nomenclatura](docs/NAMING.md) · [Logs](docs/LOGS.md) |
-| **Status** | v0.9.1 — elementos (fogo/água/elétrico/pedra), combo automático, fim de batalha garantido e UI limpa pelo playtest; 16 peças do quebra-cabeça verdes, clippy limpo |
+| **Status** | v0.10.0 — AppImage **autocontido** + portátil sem FUSE + `doctor` (roda em distro mínima/Wayland-only, ex.: Archcraft Elite); elementos, combo automático e UI v0.9; 16 peças do quebra-cabeça verdes, clippy limpo |
 
 ## O que é
 
@@ -87,8 +87,18 @@ cargo run --release -p turnrush-game -- --check   # smoke test headless (CI)
 cargo run --release -p turnrush-game -- --shot /tmp/tr   # captura 5 PNGs das telas
 ```
 
-Ou baixe o **AppImage** da [última release](https://github.com/Chrispsz/turnrush/releases/latest)
-(`chmod +x TurnRush-*.AppImage && ./TurnRush-*.AppImage`).
+Ou baixe da [última release](https://github.com/Chrispsz/turnrush/releases/latest):
+
+| Formato | Como rodar | Exige do host |
+|---|---|---|
+| `TurnRush-*.AppImage` | `chmod +x TurnRush-*.AppImage && ./TurnRush-*.AppImage` | FUSE2 (sem ele: `./TurnRush-*.AppImage --appimage-extract-and-run`) |
+| `TurnRush-*-portable.tar.gz` | extrair e `./turnrush.AppDir/turnrush` | nada — **sem FUSE** |
+| `turnrush-doctor.sh` | `./turnrush-doctor.sh TurnRush-*.AppImage` | shell POSIX |
+
+O AppImage e o portátil são **autocontidos**: a stack cliente X11/xkb/wayland
+vai embutida — do host só precisam de **glibc** e **drivers gráficos
+(Vulkan/GL)**. Sessão Wayland-only (Archcraft Elite, sway, GNOME) abre
+nativo. Não abriu? → [docs/COMPATIBILIDADE.md](docs/COMPATIBILIDADE.md).
 
 ### Ferramentas de balanceamento
 
