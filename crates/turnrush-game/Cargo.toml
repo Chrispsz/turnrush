@@ -23,4 +23,7 @@ bevy = { version = "0.20", default-features = false, features = [
   "png",
   "multi_threaded",
   "x11",
+  # Wayland nativo por padrão: sessões Wayland-only (ex.: labwc do Archcraft
+  # Elite) abrem direto, sem depender de XWayland. x11 continua para sessões X.
+  "wayland",
 ] }
